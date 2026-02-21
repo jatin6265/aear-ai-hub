@@ -51,11 +51,17 @@
     --chart-4: 45 93% 58%;
     --chart-5: 0 84% 60%;
 
+    --hero: 240 17% 14%;
+    --hero-foreground: 210 20% 95%;
+    --hero-muted: 240 10% 40%;
+
     --gradient-accent: linear-gradient(135deg, hsl(261 72% 55%), hsl(240 17% 14%));
+    --gradient-cta: linear-gradient(135deg, hsl(261 72% 55%), hsl(261 60% 45%));
     --gradient-surface: linear-gradient(180deg, hsl(0 0% 100%), hsl(220 14% 96%));
     --shadow-card: 0 1px 3px 0 rgba(0,0,0,0.06), 0 1px 2px -1px rgba(0,0,0,0.06);
     --shadow-card-hover: 0 10px 25px -5px rgba(0,0,0,0.1), 0 4px 6px -2px rgba(0,0,0,0.05);
     --shadow-glow: 0 0 20px rgba(108,60,225,0.15);
+    --shadow-glow-lg: 0 0 60px rgba(108,60,225,0.25);
   }
 
   .dark {
@@ -121,11 +127,53 @@
     background: var(--gradient-accent);
   }
   
+  .gradient-cta {
+    background: var(--gradient-cta);
+  }
+  
   .shadow-glow {
     box-shadow: var(--shadow-glow);
+  }
+
+  .shadow-glow-lg {
+    box-shadow: var(--shadow-glow-lg);
   }
 
   .glass {
     @apply bg-card/80 backdrop-blur-xl border border-border/50;
   }
+
+  .bg-hero {
+    background-color: hsl(var(--hero));
+  }
+
+  .text-hero {
+    color: hsl(var(--hero-foreground));
+  }
+
+  .text-hero-muted {
+    color: hsl(var(--hero-muted));
+  }
 }
+
+/* Animated gradient orbs */
+@keyframes float-orb-1 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(30px, -50px) scale(1.05); }
+  66% { transform: translate(-20px, 20px) scale(0.95); }
+}
+
+@keyframes float-orb-2 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(-40px, 30px) scale(1.1); }
+  66% { transform: translate(25px, -40px) scale(0.9); }
+}
+
+@keyframes float-orb-3 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(35px, 35px) scale(1.08); }
+}
+
+.orb-1 { animation: float-orb-1 8s ease-in-out infinite; }
+.orb-2 { animation: float-orb-2 10s ease-in-out infinite; }
+.orb-3 { animation: float-orb-3 12s ease-in-out infinite; }
