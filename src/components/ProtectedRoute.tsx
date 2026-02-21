@@ -1,7 +1,7 @@
-import { Navigate } from 'react-router-dom';
+import { Navigate, Outlet } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 
-export default function Index() {
+export default function ProtectedRoute() {
   const { user, loading } = useAuth();
 
   if (loading) {
@@ -12,5 +12,7 @@ export default function Index() {
     );
   }
 
-  return <Navigate to={user ? '/dashboard' : '/auth'} replace />;
+  if (!user) return <Navigate to="/auth" replace />;
+
+  return <Outlet />;
 }
