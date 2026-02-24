@@ -4,18 +4,18 @@ import { Bot, Zap, Shield, Brain, Eye, Lock, RefreshCw, ArrowRight, Check, Plug,
 import { Button } from '@/components/ui/button';
 
 const features = [
-  { icon: Zap, title: 'Auto-Discovery', desc: 'Connect any API via URL. Zero manual mapping. Instant schema detection.' },
-  { icon: Shield, title: 'RACI Governance', desc: 'Enforce org hierarchy. Not everyone can do everything. Role-based control.' },
-  { icon: Brain, title: 'Smart Agents', desc: 'Domain AI agents built automatically from your schema and data structure.' },
-  { icon: Eye, title: 'Predictive AI', desc: 'Surface insights before problems happen. Anomaly detection built-in.' },
-  { icon: Lock, title: 'Critical Protection', desc: 'Block destructive actions. Multi-approval workflows for high-risk ops.' },
-  { icon: RefreshCw, title: 'Live Sync', desc: 'Real-time data sync across all connections. Always fresh RAG responses.' },
+  { icon: Zap, title: 'Auto-Discovery', desc: 'Connect any API via URL. Zero manual mapping.' },
+  { icon: Shield, title: 'RACI Governance', desc: 'Enforce org hierarchy. Not everyone can do everything.' },
+  { icon: Brain, title: 'Smart Agents', desc: 'Domain AI agents built automatically from your schema.' },
+  { icon: Eye, title: 'Predictive AI', desc: 'Surface insights before problems happen.' },
+  { icon: Lock, title: 'Critical Protection', desc: 'Block destructive actions. Multi-approval workflows.' },
+  { icon: RefreshCw, title: 'Live Sync', desc: 'Real-time data sync. Always fresh RAG responses.' },
 ];
 
 const steps = [
-  { num: '01', icon: Plug, title: 'Connect', desc: 'Paste your API URL or DB connection string. We handle the rest.' },
-  { num: '02', icon: Search, title: 'Discover', desc: 'AI maps your entire data structure automatically in seconds.' },
-  { num: '03', icon: ShieldCheck, title: 'Govern & Execute', desc: 'Chat, query, act – all within your organization\'s rules.' },
+  { num: '01', icon: Plug, title: 'Connect', desc: 'Paste your API URL or DB connection.' },
+  { num: '02', icon: Search, title: 'Discover', desc: 'AI maps your entire data structure automatically.' },
+  { num: '03', icon: ShieldCheck, title: 'Govern & Execute', desc: 'Chat, query, act - all within your org\'s rules.' },
 ];
 
 const pricing = [
@@ -35,7 +35,7 @@ export default function LandingPage() {
   return (
     <div className="overflow-hidden">
       {/* Nav */}
-      <nav className="fixed top-0 left-0 right-0 z-50 bg-hero/80 backdrop-blur-xl border-b border-white/5">
+      <nav className="fixed top-0 left-0 right-0 z-50 bg-[#1A1A2E]/85 backdrop-blur-xl border-b border-white/5">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg gradient-cta flex items-center justify-center">
@@ -46,15 +46,15 @@ export default function LandingPage() {
           <div className="hidden md:flex items-center gap-8 text-sm text-hero-muted">
             <a href="#features" className="hover:text-hero transition-colors">Features</a>
             <a href="#how-it-works" className="hover:text-hero transition-colors">How it Works</a>
-            <a href="#pricing" className="hover:text-hero transition-colors">Pricing</a>
+            <Link to="/pricing" className="hover:text-hero transition-colors">Pricing</Link>
           </div>
           <div className="flex items-center gap-3">
-            <Link to="/auth">
+            <Link to="/auth/login">
               <Button variant="ghost" size="sm" className="text-hero-muted hover:text-hero hover:bg-white/5">
                 Sign In
               </Button>
             </Link>
-            <Link to="/auth">
+            <Link to="/auth/signup">
               <Button size="sm" className="gradient-cta text-accent-foreground hover:opacity-90 border-0">
                 Get Started
               </Button>
@@ -64,7 +64,7 @@ export default function LandingPage() {
       </nav>
 
       {/* Hero */}
-      <section className="relative bg-hero min-h-screen flex items-center pt-16 overflow-hidden">
+      <section className="relative min-h-screen flex items-center pt-16 overflow-hidden bg-[#1A1A2E]">
         {/* Orbs */}
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
           <div className="orb-1 absolute top-1/4 left-1/4 w-[500px] h-[500px] rounded-full bg-accent/10 blur-[120px]" />
@@ -82,25 +82,22 @@ export default function LandingPage() {
               <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
               <span className="text-xs font-medium text-accent">Now in Public Beta</span>
             </div>
-            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold text-hero leading-[1.1] mb-6">
-              Your Enterprise AI{' '}
-              <span className="bg-clip-text text-transparent bg-gradient-to-r from-[hsl(261,72%,65%)] to-[hsl(184,82%,40%)]">
-                Operating Layer
-              </span>
-            </h1>
+            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold text-hero leading-[1.1] mb-6">Your Enterprise AI Operating Layer</h1>
             <p className="text-lg text-hero-muted max-w-lg mb-10 leading-relaxed">
               Connect any API or database. Auto-build RAG pipelines. Enforce RACI governance. Execute safely.
             </p>
             <div className="flex flex-wrap gap-4">
-              <Link to="/auth">
+              <Link to="/auth/signup">
                 <Button size="lg" className="gradient-cta text-accent-foreground hover:opacity-90 border-0 px-8 h-12 text-base font-semibold shadow-glow-lg">
                   Start Free Trial
                   <ArrowRight className="w-4 h-4 ml-2" />
                 </Button>
               </Link>
-              <Button size="lg" variant="outline" className="border-white/15 text-hero hover:bg-white/5 px-8 h-12 text-base">
-                See Demo
-              </Button>
+              <Link to="/auth/login">
+                <Button size="lg" variant="outline" className="border-white/15 text-hero hover:bg-white/5 px-8 h-12 text-base">
+                  See Demo
+                </Button>
+              </Link>
             </div>
           </motion.div>
 
@@ -151,9 +148,9 @@ export default function LandingPage() {
       </section>
 
       {/* Social Proof */}
-      <section className="bg-hero border-t border-white/5 py-12">
+      <section className="bg-[#1A1A2E] border-t border-white/5 py-12">
         <div className="max-w-7xl mx-auto px-6">
-          <p className="text-center text-sm text-hero-muted mb-8">Trusted by forward-thinking teams at</p>
+          <p className="text-center text-sm text-hero-muted mb-8">Trusted by teams at...</p>
           <div className="flex items-center justify-center gap-12 flex-wrap">
             {logos.map((name) => (
               <span key={name} className="text-hero-muted/40 text-lg font-bold tracking-wider uppercase">{name}</span>
@@ -163,7 +160,7 @@ export default function LandingPage() {
       </section>
 
       {/* Features */}
-      <section id="features" className="py-24 bg-background">
+      <section id="features" className="py-24 bg-[#F8FAFC] text-slate-900">
         <div className="max-w-7xl mx-auto px-6">
           <motion.div
             initial="hidden"
@@ -177,7 +174,7 @@ export default function LandingPage() {
             <motion.h2 variants={fadeUp} custom={1} className="text-3xl sm:text-4xl font-bold mb-4">
               Everything your AI runtime needs
             </motion.h2>
-            <motion.p variants={fadeUp} custom={2} className="text-muted-foreground max-w-2xl mx-auto">
+            <motion.p variants={fadeUp} custom={2} className="text-slate-600 max-w-2xl mx-auto">
               From API discovery to governance enforcement, AEAR handles the full lifecycle of autonomous enterprise operations.
             </motion.p>
           </motion.div>
@@ -191,13 +188,13 @@ export default function LandingPage() {
                 viewport={{ once: true, margin: "-50px" }}
                 custom={i}
                 variants={fadeUp}
-                className="group bg-card rounded-xl border border-border p-6 hover:shadow-lg hover:border-accent/20 transition-all duration-300"
+                className="group rounded-xl border border-slate-200 bg-white p-6 shadow-sm hover:-translate-y-1 hover:shadow-xl hover:border-accent/30 transition-all duration-300"
               >
                 <div className="w-11 h-11 rounded-xl bg-accent/10 flex items-center justify-center mb-4 group-hover:bg-accent/20 transition-colors">
                   <f.icon className="w-5 h-5 text-accent" />
                 </div>
                 <h3 className="text-base font-semibold mb-2">{f.title}</h3>
-                <p className="text-sm text-muted-foreground leading-relaxed">{f.desc}</p>
+                <p className="text-sm text-slate-600 leading-relaxed">{f.desc}</p>
               </motion.div>
             ))}
           </div>
@@ -222,9 +219,6 @@ export default function LandingPage() {
           </motion.div>
 
           <div className="grid md:grid-cols-3 gap-8 relative">
-            {/* Connecting line */}
-            <div className="hidden md:block absolute top-16 left-[20%] right-[20%] h-px bg-gradient-to-r from-accent/40 via-secondary/40 to-accent/40" />
-
             {steps.map((step, i) => (
               <motion.div
                 key={step.num}
@@ -241,6 +235,9 @@ export default function LandingPage() {
                 <span className="text-xs font-mono text-accent font-bold">{step.num}</span>
                 <h3 className="text-lg font-bold mt-2 mb-2">{step.title}</h3>
                 <p className="text-sm text-muted-foreground leading-relaxed max-w-xs mx-auto">{step.desc}</p>
+                {i < steps.length - 1 && (
+                  <ArrowRight className="hidden md:block absolute -right-6 top-8 w-5 h-5 text-accent/70" />
+                )}
               </motion.div>
             ))}
           </div>
@@ -303,7 +300,7 @@ export default function LandingPage() {
                     </li>
                   ))}
                 </ul>
-                <Link to="/auth">
+                <Link to="/auth/signup">
                   <Button
                     className={`w-full ${plan.highlighted ? 'gradient-cta text-accent-foreground hover:opacity-90 border-0' : ''}`}
                     variant={plan.highlighted ? 'default' : 'outline'}
@@ -318,7 +315,7 @@ export default function LandingPage() {
       </section>
 
       {/* CTA */}
-      <section className="py-24 bg-hero relative overflow-hidden">
+      <section className="py-24 bg-[#1A1A2E] relative overflow-hidden">
         <div className="absolute inset-0 pointer-events-none">
           <div className="orb-2 absolute top-0 left-1/3 w-[400px] h-[400px] rounded-full bg-accent/10 blur-[120px]" />
         </div>
@@ -335,7 +332,7 @@ export default function LandingPage() {
             Join hundreds of teams using AEAR to connect, govern, and execute with AI.
           </motion.p>
           <motion.div variants={fadeUp} custom={2}>
-            <Link to="/auth">
+            <Link to="/auth/signup">
               <Button size="lg" className="gradient-cta text-accent-foreground hover:opacity-90 border-0 px-10 h-12 text-base font-semibold shadow-glow-lg">
                 Start Free Trial
                 <ArrowRight className="w-4 h-4 ml-2" />
@@ -346,7 +343,7 @@ export default function LandingPage() {
       </section>
 
       {/* Footer */}
-      <footer className="bg-hero border-t border-white/5 py-12">
+      <footer className="bg-[#1A1A2E] border-t border-white/5 py-12">
         <div className="max-w-7xl mx-auto px-6">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-12">
             <div>
@@ -364,24 +361,24 @@ export default function LandingPage() {
               <h4 className="text-xs font-semibold text-hero uppercase tracking-wider mb-3">Product</h4>
               <ul className="space-y-2 text-sm text-hero-muted">
                 <li><a href="#features" className="hover:text-hero transition-colors">Features</a></li>
-                <li><a href="#pricing" className="hover:text-hero transition-colors">Pricing</a></li>
-                <li><a href="#" className="hover:text-hero transition-colors">Changelog</a></li>
+                <li><Link to="/pricing" className="hover:text-hero transition-colors">Pricing</Link></li>
+                <li><Link to="/dashboard/audit" className="hover:text-hero transition-colors">Changelog</Link></li>
               </ul>
             </div>
             <div>
               <h4 className="text-xs font-semibold text-hero uppercase tracking-wider mb-3">Company</h4>
               <ul className="space-y-2 text-sm text-hero-muted">
-                <li><a href="#" className="hover:text-hero transition-colors">About</a></li>
-                <li><a href="#" className="hover:text-hero transition-colors">Blog</a></li>
-                <li><a href="#" className="hover:text-hero transition-colors">Careers</a></li>
+                <li><Link to="/pricing" className="hover:text-hero transition-colors">About</Link></li>
+                <li><Link to="/dashboard/insights" className="hover:text-hero transition-colors">Blog</Link></li>
+                <li><Link to="/auth/signup" className="hover:text-hero transition-colors">Careers</Link></li>
               </ul>
             </div>
             <div>
               <h4 className="text-xs font-semibold text-hero uppercase tracking-wider mb-3">Legal</h4>
               <ul className="space-y-2 text-sm text-hero-muted">
-                <li><a href="#" className="hover:text-hero transition-colors">Privacy</a></li>
-                <li><a href="#" className="hover:text-hero transition-colors">Terms</a></li>
-                <li><a href="#" className="hover:text-hero transition-colors">Security</a></li>
+                <li><Link to="/legal/privacy" className="hover:text-hero transition-colors">Privacy</Link></li>
+                <li><Link to="/legal/terms" className="hover:text-hero transition-colors">Terms</Link></li>
+                <li><Link to="/legal/security" className="hover:text-hero transition-colors">Security</Link></li>
               </ul>
             </div>
           </div>

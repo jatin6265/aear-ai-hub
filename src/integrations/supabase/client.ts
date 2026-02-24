@@ -3,7 +3,8 @@ import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+const SUPABASE_PUBLISHABLE_KEY =
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
@@ -13,5 +14,263 @@ export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABL
     storage: localStorage,
     persistSession: true,
     autoRefreshToken: true,
+    detectSessionInUrl: true,
+    flowType: "pkce",
   }
 });
+
+function tokenExpiringSoon(expiresAt?: number | null, skewMs = 60_000) {
+  if (!expiresAt) return true;
+  return expiresAt * 1000 <= Date.now() + skewMs;
+}
+
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  const parts = token.split(".");
+  if (parts.length < 2) return null;
+  try {
+    const normalized = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    return JSON.parse(atob(padded)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function hasProjectTokenMismatch(token: string) {
+  const payload = decodeJwtPayload(token);
+  const issuer = typeof payload?.iss === "string" ? payload.iss : "";
+  const expected = `${SUPABASE_URL}/auth/v1`;
+  if (!issuer || !expected) return false;
+  return !issuer.startsWith(expected);
+}
+
+function isInvalidSessionError(error: unknown) {
+  const message = String((error as { message?: unknown })?.message ?? "").toLowerCase();
+  const status = Number((error as { status?: unknown })?.status ?? 0);
+  return (
+    status === 401 ||
+    message.includes("invalid jwt") ||
+    message.includes("jwt expired") ||
+    message.includes("refresh token") ||
+    message.includes("invalid refresh token") ||
+    message.includes("token is expired")
+  );
+}
+
+function isHardRefreshFailure(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const status = Number((error as { status?: unknown })?.status ?? 0);
+  const message = String((error as { message?: unknown })?.message ?? "").toLowerCase();
+  if (status === 401) return true;
+  return (
+    message.includes("invalid refresh token") ||
+    message.includes("refresh token not found") ||
+    message.includes("token has expired") ||
+    message.includes("jwt expired")
+  );
+}
+
+function clearSupabaseAuthStorage() {
+  try {
+    const keysToDelete: string[] = [];
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index);
+      if (!key) continue;
+      const lower = key.toLowerCase();
+      if (lower.startsWith("sb-") && lower.includes("auth-token")) {
+        keysToDelete.push(key);
+      }
+    }
+    for (const key of keysToDelete) localStorage.removeItem(key);
+  } catch {
+    // Ignore storage errors.
+  }
+}
+
+async function resetLocalSession() {
+  try {
+    await supabase.auth.signOut({ scope: "local" });
+  } catch {
+    // Ignore sign-out errors.
+  }
+  clearSupabaseAuthStorage();
+}
+
+async function resolveInvokeToken() {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const active = sessionData.session;
+    if (active?.access_token && !tokenExpiringSoon(active.expires_at)) {
+      return active.access_token;
+    }
+
+    const refreshed = await supabase.auth.refreshSession();
+    if (refreshed.data.session?.access_token) {
+      return refreshed.data.session.access_token;
+    }
+    if (isHardRefreshFailure(refreshed.error)) {
+      await resetLocalSession();
+      return "";
+    }
+
+    const fallbackTokenValid = active?.access_token && !tokenExpiringSoon(active.expires_at, 0);
+    if (fallbackTokenValid) return active.access_token;
+
+    if (attempt < 2) {
+      await new Promise((resolve) => window.setTimeout(resolve, 250));
+    }
+  }
+
+  return "";
+}
+
+function readInvokeErrorStatus(error: unknown) {
+  if (!error || typeof error !== "object") return null;
+  const maybe = error as { context?: { status?: number }; status?: number; message?: string };
+  if (typeof maybe.context?.status === "number") return maybe.context.status;
+  if (typeof maybe.status === "number") return maybe.status;
+  const message = String(maybe.message ?? "").toLowerCase();
+  if (message.includes("status code 401")) return 401;
+  if (message.includes("status code 403")) return 403;
+  if (message.includes("invalid jwt") || message.includes("missing authorization")) return 401;
+  return null;
+}
+
+function extractDetailFromPayload(payload: unknown) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return "";
+  const row = payload as Record<string, unknown>;
+  const direct =
+    String(row.message ?? "").trim() ||
+    String(row.reason ?? "").trim() ||
+    String(row.detail ?? "").trim() ||
+    String(row.details ?? "").trim() ||
+    String(row.error ?? "").trim();
+  if (direct) return direct;
+  if (row.details && typeof row.details === "object") {
+    try {
+      return JSON.stringify(row.details);
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+
+async function enrichInvokeErrorMessage(
+  functionName: string,
+  error: unknown,
+): Promise<string> {
+  if (!error || typeof error !== "object") {
+    return `Edge function '${functionName}' request failed.`;
+  }
+
+  const asRecord = error as Record<string, unknown>;
+  const baseMessage = String(asRecord.message ?? "").trim();
+  const status = readInvokeErrorStatus(error);
+  const context = asRecord.context as { clone?: () => Response; json?: () => Promise<unknown>; text?: () => Promise<string> } | null;
+
+  let details = "";
+  if (context && typeof context.clone === "function") {
+    const clone = context.clone();
+    if (clone && typeof clone.json === "function") {
+      try {
+        const payload = await clone.json();
+        details = extractDetailFromPayload(payload);
+      } catch {
+        // ignore and fallback to text
+      }
+    }
+
+    if (!details && clone && typeof clone.text === "function") {
+      try {
+        details = String(await clone.text()).trim();
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  if (details) return details;
+  if (status) return `Edge function '${functionName}' failed with HTTP ${status}.`;
+  if (baseMessage.toLowerCase().includes("non-2xx")) {
+    return `Edge function '${functionName}' returned an HTTP error.`;
+  }
+  return baseMessage || `Edge function '${functionName}' request failed.`;
+}
+
+function authInvokeErrorResult<T = unknown>(message: string) {
+  return {
+    data: null,
+    error: {
+      message,
+      context: { status: 401 },
+      name: "FunctionsAuthError",
+    },
+  } as unknown as Awaited<ReturnType<typeof supabase.functions.invoke<T>>>;
+}
+
+async function maybeResetSessionFromInvokeError(error: unknown, parsedMessage?: string) {
+  const message = `${String((error as { message?: unknown })?.message ?? "")} ${String(parsedMessage ?? "")}`.toLowerCase();
+  const shouldReset =
+    message.includes("session token belongs to another supabase project") ||
+    message.includes("jwt issuer does not match this supabase project");
+  if (shouldReset) {
+    await resetLocalSession();
+  }
+}
+
+// Ensure all function invocations carry a fresh JWT consistently across the app.
+const originalInvoke = supabase.functions.invoke.bind(supabase.functions) as typeof supabase.functions.invoke;
+supabase.functions.invoke = (async (fn: string, options?: { body?: unknown; headers?: HeadersInit }) => {
+  const mergedHeaders = new Headers(options?.headers ?? {});
+  if (!mergedHeaders.has("apikey") && SUPABASE_PUBLISHABLE_KEY) {
+    mergedHeaders.set("apikey", SUPABASE_PUBLISHABLE_KEY);
+  }
+
+  if (!mergedHeaders.has("Authorization")) {
+    let token = await resolveInvokeToken();
+    if (token && hasProjectTokenMismatch(token)) {
+      await resetLocalSession();
+      const { data: refreshed } = await supabase.auth.refreshSession();
+      token = refreshed.session?.access_token ?? "";
+      if (!token || hasProjectTokenMismatch(token)) {
+        await resetLocalSession();
+        return authInvokeErrorResult("Session token belongs to another Supabase project. Please sign in again.");
+      }
+    }
+    if (token) mergedHeaders.set("Authorization", `Bearer ${token}`);
+  }
+
+  let result = await originalInvoke(fn, {
+    ...(options ?? {}),
+    headers: Object.fromEntries(mergedHeaders.entries()),
+  } as Parameters<typeof supabase.functions.invoke>[1]);
+
+  const status = readInvokeErrorStatus(result.error);
+  if (result.error && status === 401) {
+    const retryToken = await resolveInvokeToken();
+    if (retryToken) {
+      if (hasProjectTokenMismatch(retryToken)) {
+        await resetLocalSession();
+        return authInvokeErrorResult("Session token belongs to another Supabase project. Please sign in again.");
+      }
+      mergedHeaders.set("Authorization", `Bearer ${retryToken}`);
+      result = await originalInvoke(fn, {
+        ...(options ?? {}),
+        headers: Object.fromEntries(mergedHeaders.entries()),
+      } as Parameters<typeof supabase.functions.invoke>[1]);
+    }
+  }
+
+  if (result.error) {
+    const normalizedMessage = await enrichInvokeErrorMessage(fn, result.error);
+    await maybeResetSessionFromInvokeError(result.error, normalizedMessage);
+    try {
+      (result.error as { message?: string }).message = normalizedMessage;
+    } catch {
+      // no-op
+    }
+  }
+
+  return result;
+}) as typeof supabase.functions.invoke;

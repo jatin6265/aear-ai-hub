@@ -1,73 +1,77 @@
-# Welcome to your Lovable project
+# AEAR AI Hub
 
-## Project info
+Your Enterprise AI Operating Layer.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+Connect any API or database. Auto-build RAG pipelines. Enforce RACI governance. Execute safely.
 
-## How can I edit this code?
+## Tech stack
 
-There are several ways of editing your application.
+- Vite + React + TypeScript
+- Supabase (Auth, Postgres, Realtime, Storage, Edge Functions)
+- Node worker runtime (`worker/connector-worker.mjs`)
+- OpenAI for embeddings and LLM runtime
 
-**Use Lovable**
+## Prerequisites
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+- Node.js 20+ recommended (Supabase JS packages target Node 20+)
+- `npm`
+- `jq`
+- Supabase CLI (`supabase`) for deploy workflows
 
-Changes made via Lovable will be committed automatically to this repo.
+## Quick start (local app + backend checks)
 
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
+```bash
+npm run setup:e2e
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+In a second terminal, run:
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+```bash
+npm run worker:run
+```
 
-**Use GitHub Codespaces**
+## One-command backend deploy (migrations + functions + TS types)
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+```bash
+npm run backend:deploy -- <supabase-project-ref>
+```
 
-## What technologies are used for this project?
+Equivalent direct command:
 
-This project is built with:
+```bash
+scripts/deploy-backend.sh <supabase-project-ref>
+```
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+## Verification commands
 
-## How can I deploy this project?
+```bash
+npm run backend:verify
+npm run backend:verify-runtime
+bash scripts/sync-supabase-env-keys.sh
+```
 
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
+Strict runtime check (fails if simulated/static markers are detected in critical runtime paths):
 
-## Can I connect a custom domain to my Lovable project?
+```bash
+bash scripts/verify-runtime-wiring.sh --strict --project-ref <supabase-project-ref>
+```
 
-Yes, you can!
+## End-to-end setup helper
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+Use this command to install deps, verify wiring, optionally deploy backend, and build:
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+```bash
+scripts/setup-e2e.sh --project-ref <supabase-project-ref>
+```
+
+No deploy mode (local-only validation):
+
+```bash
+scripts/setup-e2e.sh --no-deploy
+```
+
+## Operations docs
+
+- `docs/operations/environments.md`
+- `docs/operations/deployment-runbook.md`

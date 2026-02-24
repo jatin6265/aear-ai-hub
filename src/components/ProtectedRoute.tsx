@@ -1,8 +1,8 @@
-import { Navigate, Outlet } from 'react-router-dom';
-import { useAuth } from '@/hooks/useAuth';
+import { Navigate, Outlet } from "react-router-dom";
+import { useAuth } from "@/hooks/useAuth";
 
 export default function ProtectedRoute() {
-  const { user, loading } = useAuth();
+  const { user, session, loading, emailVerified } = useAuth();
 
   if (loading) {
     return (
@@ -12,7 +12,14 @@ export default function ProtectedRoute() {
     );
   }
 
-  if (!user) return <Navigate to="/auth" replace />;
+  if (!user || !session) return <Navigate to="/auth/login" replace />;
+  if (!emailVerified) {
+    const email = typeof user.email === "string" ? user.email : "";
+    const target = email
+      ? `/auth/verify-email?email=${encodeURIComponent(email)}`
+      : "/auth/verify-email";
+    return <Navigate to={target} replace />;
+  }
 
   return <Outlet />;
 }
