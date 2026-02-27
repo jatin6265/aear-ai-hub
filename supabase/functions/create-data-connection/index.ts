@@ -44,7 +44,13 @@ function isMissingColumnError(error: { code?: string | null; message?: string | 
   if (!error) return false;
   const code = String(error.code ?? "");
   const message = String(error.message ?? "").toLowerCase();
-  return code === "42703" || code === "PGRST204" || message.includes("column") && message.includes("does not exist");
+  return (
+    code === "42703" ||
+    code === "PGRST204" ||
+    (message.includes("column") && message.includes("does not exist")) ||
+    (message.includes("column") && message.includes("schema cache")) ||
+    (message.includes("could not find") && message.includes("column"))
+  );
 }
 
 async function resolveTenantIdByUserId(

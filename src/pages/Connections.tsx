@@ -165,6 +165,19 @@ type PipelineDiagnosticsResponse = {
   ok?: boolean;
   payload?: PipelineDiagnosticsPayload;
 };
+const CONNECTION_QUERY_TIMEOUT_MS = 15_000;
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeoutId: number | null = null;
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timeoutId = window.setTimeout(() => {
+      reject(new Error(`${label} timed out after ${Math.max(1, Math.floor(timeoutMs / 1000))}s.`));
+    }, timeoutMs);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeoutId !== null) window.clearTimeout(timeoutId);
+  });
+}
 
 const TYPE_OPTIONS: Array<{
   value: ConnectionType;
@@ -366,7 +379,13 @@ function isMissingColumnError(error: { code?: string; message?: string } | null)
   if (!error) return false;
   const code = String(error.code ?? "").trim();
   const message = String(error.message ?? "").toLowerCase();
-  return code === "42703" || code === "PGRST204" || (message.includes("column") && message.includes("does not exist"));
+  return (
+    code === "42703" ||
+    code === "PGRST204" ||
+    (message.includes("column") && message.includes("does not exist")) ||
+    (message.includes("column") && message.includes("schema cache")) ||
+    (message.includes("could not find") && message.includes("column"))
+  );
 }
 
 function validateConfig(type: ConnectionType | null, draft: ConnectionDraft) {
@@ -660,62 +679,75 @@ export default function Connections() {
 
   const loadConnections = useCallback(async (workspaceTenantId: string, silent = false) => {
     if (!silent) setLoading(true);
-    const baseSelect =
-      "id, tenant_id, name, type, base_url, status, schema_detected, last_synced_at, created_at, schema_tables_count, schema_entities_count, queries_today, embeddings_indexed, sync_lag_seconds, last_error, is_archived";
-    const { data, error } = await supabase
-      .from("api_connections")
-      .select(baseSelect)
-      .eq("tenant_id", workspaceTenantId)
-      .order("created_at", { ascending: false });
-
-    let rows: ApiConnectionRow[];
-    if (!error) {
-      rows = ((data ?? []) as ApiConnectionRow[]).filter((row) => row.is_archived !== true);
-    } else if (isMissingColumnError(error)) {
-      const legacy = await supabase
-        .from("api_connections")
-        .select("id, tenant_id, name, type, base_url, status, schema_detected, last_synced_at, created_at, last_error")
-        .eq("tenant_id", workspaceTenantId)
-        .order("created_at", { ascending: false });
-      if (legacy.error) throw legacy.error;
-      rows = ((legacy.data ?? []) as ApiConnectionRow[]).map((row) => ({
-        ...row,
-        schema_tables_count: row.schema_tables_count ?? 0,
-        schema_entities_count: row.schema_entities_count ?? 0,
-        queries_today: row.queries_today ?? 0,
-        embeddings_indexed: row.embeddings_indexed ?? 0,
-        sync_lag_seconds: row.sync_lag_seconds ?? 0,
-        is_archived: false,
-      }));
-    } else {
-      throw error;
-    }
-
-    const ids = rows.map((row) => row.id);
-    const nextFacts = new Map<string, ConnectionPipelineFacts>();
-
-    if (ids.length > 0) {
-      const [entityResponse, jobResponse, syncResponse] = await Promise.all([
+    try {
+      const baseSelect =
+        "id, tenant_id, name, type, base_url, status, schema_detected, last_synced_at, created_at, schema_tables_count, schema_entities_count, queries_today, embeddings_indexed, sync_lag_seconds, last_error, is_archived";
+      const { data, error } = await withTimeout(
         supabase
-          .from("connection_entities")
-          .select("id, connection_id")
+          .from("api_connections")
+          .select(baseSelect)
           .eq("tenant_id", workspaceTenantId)
-          .in("connection_id", ids),
-        supabase
-          .from("connector_jobs")
-          .select("connection_id, status, last_error, updated_at")
-          .eq("tenant_id", workspaceTenantId)
-          .in("connection_id", ids)
-          .order("updated_at", { ascending: false })
-          .limit(500),
-        supabase
-          .from("connection_sync_runs")
-          .select("connection_id, status, error_message, updated_at")
-          .eq("tenant_id", workspaceTenantId)
-          .in("connection_id", ids)
-          .order("updated_at", { ascending: false })
-          .limit(500),
-      ]);
+          .order("created_at", { ascending: false }),
+        CONNECTION_QUERY_TIMEOUT_MS,
+        "Connections query",
+      );
+
+      let rows: ApiConnectionRow[];
+      if (!error) {
+        rows = ((data ?? []) as ApiConnectionRow[]).filter((row) => row.is_archived !== true);
+      } else if (isMissingColumnError(error)) {
+        const legacy = await withTimeout(
+          supabase
+            .from("api_connections")
+            .select("id, tenant_id, name, type, base_url, status, schema_detected, last_synced_at, created_at, last_error")
+            .eq("tenant_id", workspaceTenantId)
+            .order("created_at", { ascending: false }),
+          CONNECTION_QUERY_TIMEOUT_MS,
+          "Connections legacy query",
+        );
+        if (legacy.error) throw legacy.error;
+        rows = ((legacy.data ?? []) as ApiConnectionRow[]).map((row) => ({
+          ...row,
+          schema_tables_count: row.schema_tables_count ?? 0,
+          schema_entities_count: row.schema_entities_count ?? 0,
+          queries_today: row.queries_today ?? 0,
+          embeddings_indexed: row.embeddings_indexed ?? 0,
+          sync_lag_seconds: row.sync_lag_seconds ?? 0,
+          is_archived: false,
+        }));
+      } else {
+        throw error;
+      }
+
+      const ids = rows.map((row) => row.id);
+      const nextFacts = new Map<string, ConnectionPipelineFacts>();
+
+      if (ids.length > 0) {
+        const [entityResponse, jobResponse, syncResponse] = await withTimeout(
+          Promise.all([
+            supabase
+              .from("connection_entities")
+              .select("id, connection_id")
+              .eq("tenant_id", workspaceTenantId)
+              .in("connection_id", ids),
+            supabase
+              .from("connector_jobs")
+              .select("connection_id, status, last_error, updated_at")
+              .eq("tenant_id", workspaceTenantId)
+              .in("connection_id", ids)
+              .order("updated_at", { ascending: false })
+              .limit(500),
+            supabase
+              .from("connection_sync_runs")
+              .select("connection_id, status, error_message, updated_at")
+              .eq("tenant_id", workspaceTenantId)
+              .in("connection_id", ids)
+              .order("updated_at", { ascending: false })
+              .limit(500),
+          ]),
+          CONNECTION_QUERY_TIMEOUT_MS,
+          "Connection facts query",
+        );
 
       if (entityResponse.error) throw entityResponse.error;
 
@@ -823,10 +855,12 @@ export default function Connections() {
       }
     }
 
-    setConnectionFacts(nextFacts);
-    setConnections(rows);
-    void loadPipelineDiagnostics();
-    setLoading(false);
+      setConnectionFacts(nextFacts);
+      setConnections(rows);
+      void loadPipelineDiagnostics();
+    } finally {
+      if (!silent) setLoading(false);
+    }
   }, [loadPipelineDiagnostics]);
 
   useEffect(() => {

@@ -2,6 +2,20 @@ import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 
 const MAX_TENANT_SLUG_ATTEMPTS = 5;
+const DEFAULT_DB_TIMEOUT_MS = 15_000;
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeoutId: number | null = null;
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timeoutId = window.setTimeout(() => {
+      reject(new Error(`${label} timed out after ${Math.max(1, Math.floor(timeoutMs / 1000))}s.`));
+    }, timeoutMs);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeoutId !== null) window.clearTimeout(timeoutId);
+  });
+}
 
 function randomSuffix(length = 6) {
   return Math.random().toString(36).slice(2, 2 + length);
@@ -36,14 +50,18 @@ async function createTenant(companyName: string) {
 
   for (let attempt = 0; attempt < MAX_TENANT_SLUG_ATTEMPTS; attempt += 1) {
     const slug = `${baseSlug}-${randomSuffix(attempt === 0 ? 4 : 6)}`;
-    const { data, error } = await supabase
-      .from("tenants")
-      .insert({
-        name: companyName,
-        slug,
-      })
-      .select("id")
-      .single();
+    const { data, error } = await withTimeout(
+      supabase
+        .from("tenants")
+        .insert({
+          name: companyName,
+          slug,
+        })
+        .select("id")
+        .single(),
+      DEFAULT_DB_TIMEOUT_MS,
+      "Tenant creation",
+    );
 
     if (!error) return data.id;
     if (error.code !== "23505") throw error;
@@ -86,11 +104,15 @@ export async function ensureUserWorkspace(user: User, options?: EnsureUserWorksp
     deriveCompanyNameFromEmail(user.email);
   const termsAccepted = Boolean(options?.termsAccepted);
 
-  const rpcResponse = await supabase.rpc("provision_user_workspace", {
-    p_company_name: companyName,
-    p_full_name: fullName,
-    p_terms_accepted: termsAccepted,
-  });
+  const rpcResponse = await withTimeout(
+    supabase.rpc("provision_user_workspace", {
+      p_company_name: companyName,
+      p_full_name: fullName,
+      p_terms_accepted: termsAccepted,
+    }),
+    DEFAULT_DB_TIMEOUT_MS,
+    "Workspace provisioning RPC",
+  );
 
   if (!rpcResponse.error && rpcResponse.data?.[0]) {
     return {
@@ -103,11 +125,15 @@ export async function ensureUserWorkspace(user: User, options?: EnsureUserWorksp
     throw rpcResponse.error;
   }
 
-  const { data: existingProfile, error: profileError } = await supabase
-    .from("profiles")
-    .select("id, tenant_id, role, full_name, terms_accepted_at")
-    .eq("id", user.id)
-    .maybeSingle();
+  const { data: existingProfile, error: profileError } = await withTimeout(
+    supabase
+      .from("profiles")
+      .select("id, tenant_id, role, full_name, terms_accepted_at")
+      .eq("id", user.id)
+      .maybeSingle(),
+    DEFAULT_DB_TIMEOUT_MS,
+    "Profile lookup",
+  );
 
   if (profileError) throw profileError;
 
@@ -116,21 +142,25 @@ export async function ensureUserWorkspace(user: User, options?: EnsureUserWorksp
     tenantId = await createTenant(companyName);
   }
 
-  const { data: profile, error: upsertError } = await supabase
-    .from("profiles")
-    .upsert(
-      {
-        id: user.id,
-        full_name: fullName ?? existingProfile?.full_name ?? null,
-        role: existingProfile?.role ?? "owner",
-        tenant_id: tenantId,
-        terms_accepted_at:
-          existingProfile?.terms_accepted_at ?? (termsAccepted ? new Date().toISOString() : null),
-      },
-      { onConflict: "id" },
-    )
-    .select("role, tenant_id")
-    .single();
+  const { data: profile, error: upsertError } = await withTimeout(
+    supabase
+      .from("profiles")
+      .upsert(
+        {
+          id: user.id,
+          full_name: fullName ?? existingProfile?.full_name ?? null,
+          role: existingProfile?.role ?? "owner",
+          tenant_id: tenantId,
+          terms_accepted_at:
+            existingProfile?.terms_accepted_at ?? (termsAccepted ? new Date().toISOString() : null),
+        },
+        { onConflict: "id" },
+      )
+      .select("role, tenant_id")
+      .single(),
+    DEFAULT_DB_TIMEOUT_MS,
+    "Profile upsert",
+  );
 
   if (upsertError) throw upsertError;
 
@@ -141,10 +171,14 @@ export async function ensureUserWorkspace(user: User, options?: EnsureUserWorksp
 }
 
 export async function tenantHasConnections(tenantId: string) {
-  const { count, error } = await supabase
-    .from("api_connections")
-    .select("id", { count: "exact", head: true })
-    .eq("tenant_id", tenantId);
+  const { count, error } = await withTimeout(
+    supabase
+      .from("api_connections")
+      .select("id", { count: "exact", head: true })
+      .eq("tenant_id", tenantId),
+    DEFAULT_DB_TIMEOUT_MS,
+    "Connection count",
+  );
 
   if (error) throw error;
 
@@ -159,11 +193,15 @@ function isMissingOnboardingColumns(error: { code?: string; message?: string } |
 }
 
 export async function tenantNeedsOnboarding(tenantId: string) {
-  const onboardingQuery = await supabase
-    .from("tenants")
-    .select("status,onboarding_step,onboarding_completed_at")
-    .eq("id", tenantId)
-    .maybeSingle();
+  const onboardingQuery = await withTimeout(
+    supabase
+      .from("tenants")
+      .select("status,onboarding_step,onboarding_completed_at")
+      .eq("id", tenantId)
+      .maybeSingle(),
+    DEFAULT_DB_TIMEOUT_MS,
+    "Tenant onboarding lookup",
+  );
 
   if (!onboardingQuery.error && onboardingQuery.data) {
     const status = String(onboardingQuery.data.status ?? "").trim().toLowerCase();
@@ -180,11 +218,15 @@ export async function tenantNeedsOnboarding(tenantId: string) {
     throw onboardingQuery.error;
   }
 
-  const statusQuery = await supabase
-    .from("tenants")
-    .select("status")
-    .eq("id", tenantId)
-    .maybeSingle();
+  const statusQuery = await withTimeout(
+    supabase
+      .from("tenants")
+      .select("status")
+      .eq("id", tenantId)
+      .maybeSingle(),
+    DEFAULT_DB_TIMEOUT_MS,
+    "Tenant status lookup",
+  );
 
   if (statusQuery.error) throw statusQuery.error;
 

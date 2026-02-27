@@ -29,12 +29,11 @@ function decodeJwtPayload(token: string) {
   }
 }
 
-function hasProjectIssuerMismatch(token: string, supabaseUrl: string) {
+function issuerBaseFromToken(token: string) {
   const payload = decodeJwtPayload(token);
   const issuer = typeof payload?.iss === "string" ? payload.iss : "";
-  const expected = `${supabaseUrl}/auth/v1`;
-  if (!issuer || !expected) return false;
-  return !issuer.startsWith(expected);
+  if (!issuer) return "";
+  return issuer.replace(/\/auth\/v1\/?$/i, "").trim();
 }
 
 function uniqueNonEmpty(values: Array<string | undefined>) {
@@ -47,14 +46,26 @@ function uniqueNonEmpty(values: Array<string | undefined>) {
   );
 }
 
+function buildUrlCandidates(token: string) {
+  const envPrimary = Deno.env.get("SUPABASE_URL");
+  const envFallback = Deno.env.get("VITE_SUPABASE_URL");
+  const issuerBase = issuerBaseFromToken(token);
+  return uniqueNonEmpty([envPrimary, envFallback, issuerBase]);
+}
+
+function hasProjectIssuerMismatch(token: string, urlCandidates: string[]) {
+  const issuerBase = issuerBaseFromToken(token);
+  if (!issuerBase) return false;
+  if (urlCandidates.length === 0) return false;
+  return !urlCandidates.some((value) => value === issuerBase);
+}
+
 type VerifiedUser = {
   id: string;
   [key: string]: unknown;
 };
 
 export async function getAuthedClient(req: Request) {
-  // Prefer runtime-provided Supabase secrets first; VITE_* keys are fallback-only.
-  const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? Deno.env.get("VITE_SUPABASE_URL");
   const requestApiKey = req.headers.get("apikey") ?? req.headers.get("x-api-key") ?? "";
   const publicKeys = uniqueNonEmpty([
     requestApiKey,
@@ -68,7 +79,7 @@ export async function getAuthedClient(req: Request) {
     Deno.env.get("VITE_SUPABASE_SERVICE_ROLE_KEY"),
   ]);
 
-  if (!supabaseUrl || (serviceKeys.length === 0 && publicKeys.length === 0)) {
+  if (serviceKeys.length === 0 && publicKeys.length === 0) {
     return {
       ok: false as const,
       response: errorResponse(
@@ -103,39 +114,55 @@ export async function getAuthedClient(req: Request) {
     };
   }
 
+  const urlCandidates = buildUrlCandidates(accessToken);
+  if (urlCandidates.length === 0) {
+    return {
+      ok: false as const,
+      response: errorResponse(
+        500,
+        "Missing Supabase runtime URL (SUPABASE_URL or VITE_SUPABASE_URL)",
+      ),
+    };
+  }
+
   // Verify with runtime keys in deterministic order:
   // service keys first (stable for JWT verification), then request/public fallbacks.
   const verificationCandidates = uniqueNonEmpty([...serviceKeys, ...publicKeys]);
 
   let verifiedUser: VerifiedUser | null = null;
   let verificationErrorMessage = "";
+  let selectedUrl = "";
   let selectedVerificationKey = "";
 
-  for (const candidateKey of verificationCandidates) {
-    const verificationClient = createClient(supabaseUrl, candidateKey, {
-      global: {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
+  for (const candidateUrl of urlCandidates) {
+    for (const candidateKey of verificationCandidates) {
+      const verificationClient = createClient(candidateUrl, candidateKey, {
+        global: {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
         },
-      },
-    });
+      });
 
-    const {
-      data: { user },
-      error,
-    } = await verificationClient.auth.getUser(accessToken);
+      const {
+        data: { user },
+        error,
+      } = await verificationClient.auth.getUser(accessToken);
 
-    if (!error && user) {
-      verifiedUser = user as unknown as VerifiedUser;
-      selectedVerificationKey = candidateKey;
-      break;
+      if (!error && user) {
+        verifiedUser = user as unknown as VerifiedUser;
+        selectedUrl = candidateUrl;
+        selectedVerificationKey = candidateKey;
+        break;
+      }
+
+      if (error?.message) verificationErrorMessage = error.message;
     }
-
-    if (error?.message) verificationErrorMessage = error.message;
+    if (verifiedUser) break;
   }
 
   if (!verifiedUser) {
-    if (hasProjectIssuerMismatch(accessToken, supabaseUrl)) {
+    if (hasProjectIssuerMismatch(accessToken, urlCandidates)) {
       return {
         ok: false as const,
         response: errorResponse(
@@ -154,15 +181,16 @@ export async function getAuthedClient(req: Request) {
   // Use the exact key that successfully verified this JWT.
   // This avoids split-brain failures when service/public keys drift in runtime secrets.
   const runtimeKey = selectedVerificationKey || serviceKeys[0];
+  const runtimeUrl = selectedUrl || urlCandidates[0];
 
-  if (!runtimeKey) {
+  if (!runtimeKey || !runtimeUrl) {
     return {
       ok: false as const,
-      response: errorResponse(500, "Missing Supabase runtime key after verification"),
+      response: errorResponse(500, "Missing Supabase runtime URL/key after verification"),
     };
   }
 
-  const supabase = createClient(supabaseUrl, runtimeKey, {
+  const supabase = createClient(runtimeUrl, runtimeKey, {
     global: {
       headers: {
         Authorization: `Bearer ${accessToken}`,

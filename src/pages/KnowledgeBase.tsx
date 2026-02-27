@@ -74,6 +74,16 @@ const FALLBACK_RECENT_QUERIES = [
   "List customers with overdue invoices",
 ];
 
+function applyKnowledgeChipFilter(items: KnowledgeEntityCard[], chip: KnowledgeChip) {
+  if (chip === "all") return items;
+  if (chip === "documents") return items.filter((item) => item.sourceKind === "document");
+  if (chip === "relationships") return items.filter((item) => item.relationshipCount > 0);
+  if (chip === "tables" || chip === "entities") {
+    return items.filter((item) => item.sourceKind !== "document");
+  }
+  return items;
+}
+
 function formatRelativeTime(value: string) {
   const now = Date.now();
   const then = new Date(value).getTime();
@@ -193,63 +203,186 @@ export default function KnowledgeBase() {
         }),
       ]);
 
-      if (entitiesResponse.error) throw entitiesResponse.error;
-      if (statsResponse.error) throw statsResponse.error;
-      if (recentQueriesResponse.error) throw recentQueriesResponse.error;
+      let mappedEntities: KnowledgeEntityCard[] = [];
+      let nextStats: KnowledgeStats = {
+        totalEntities: 0,
+        embeddingsVectors: 0,
+        documentsIndexed: 0,
+        coveragePct: 0,
+        storageGb: 0,
+      };
+      let nextRecentQueries: Array<{ id: string; content: string; createdAt: string }> = [];
 
-      const entityRows = (entitiesResponse.data ?? []) as KnowledgeEntityRow[];
-      const mappedEntities: KnowledgeEntityCard[] = entityRows.map((entity) => ({
-        id: entity.entity_id,
-        connectionId: entity.connection_id,
-        connectionName: entity.connection_name,
-        name: entity.entity_name,
-        entityType: mapEntityType(entity.entity_group),
-        description: entity.description,
-        keyFields: entity.key_fields.slice(0, 4),
-        sensitivity: mapSensitivity(entity.sensitivity),
-        rowCount: Number(entity.row_count ?? 0),
-        lastUpdated: entity.last_updated,
-        embeddingCoverage: Number(entity.embedding_coverage ?? 0),
-        sourceKind: entity.source_kind,
-        relationshipCount: entity.relationship_count ?? 0,
-      }));
+      const rpcFailed = Boolean(entitiesResponse.error || statsResponse.error || recentQueriesResponse.error);
+      if (!rpcFailed) {
+        const entityRows = (entitiesResponse.data ?? []) as KnowledgeEntityRow[];
+        mappedEntities = entityRows.map((entity) => ({
+          id: entity.entity_id,
+          connectionId: entity.connection_id,
+          connectionName: entity.connection_name,
+          name: entity.entity_name,
+          entityType: mapEntityType(entity.entity_group),
+          description: entity.description,
+          keyFields: entity.key_fields.slice(0, 4),
+          sensitivity: mapSensitivity(entity.sensitivity),
+          rowCount: Number(entity.row_count ?? 0),
+          lastUpdated: entity.last_updated,
+          embeddingCoverage: Number(entity.embedding_coverage ?? 0),
+          sourceKind: entity.source_kind,
+          relationshipCount: entity.relationship_count ?? 0,
+        }));
 
-      const statsRow = ((statsResponse.data ?? [])[0] as KnowledgeStatsRow | undefined) ?? null;
-      const nextStats: KnowledgeStats = statsRow
-        ? {
-            totalEntities: Number(statsRow.total_entities ?? 0),
-            embeddingsVectors: Number(statsRow.embeddings_vectors ?? 0),
-            documentsIndexed: Number(statsRow.documents_indexed ?? 0),
-            coveragePct: Number(statsRow.coverage_pct ?? 0),
-            storageGb: Number(statsRow.storage_gb ?? 0),
-          }
-        : {
-            totalEntities: mappedEntities.length,
-            embeddingsVectors: 0,
-            documentsIndexed: 0,
-            coveragePct:
-              mappedEntities.length > 0
-                ? Math.round(
-                    mappedEntities.reduce((sum, entity) => sum + entity.embeddingCoverage, 0) /
-                      mappedEntities.length,
-                  )
-                : 0,
-            storageGb: 0,
-          };
+        const statsRow = ((statsResponse.data ?? [])[0] as KnowledgeStatsRow | undefined) ?? null;
+        nextStats = statsRow
+          ? {
+              totalEntities: Number(statsRow.total_entities ?? 0),
+              embeddingsVectors: Number(statsRow.embeddings_vectors ?? 0),
+              documentsIndexed: Number(statsRow.documents_indexed ?? 0),
+              coveragePct: Number(statsRow.coverage_pct ?? 0),
+              storageGb: Number(statsRow.storage_gb ?? 0),
+            }
+          : {
+              totalEntities: mappedEntities.length,
+              embeddingsVectors: 0,
+              documentsIndexed: 0,
+              coveragePct:
+                mappedEntities.length > 0
+                  ? Math.round(
+                      mappedEntities.reduce((sum, entity) => sum + entity.embeddingCoverage, 0) /
+                        mappedEntities.length,
+                    )
+                  : 0,
+              storageGb: 0,
+            };
 
-      const recentRows = (recentQueriesResponse.data ?? []) as KnowledgeRecentQueryRow[];
-      const nextRecentQueries =
-        recentRows.length > 0
-          ? recentRows.map((item) => ({
-              id: item.id,
-              content: item.content,
-              createdAt: item.created_at,
-            }))
-          : FALLBACK_RECENT_QUERIES.map((query, index) => ({
-              id: `fallback-query-${index}`,
-              content: query,
-              createdAt: new Date(Date.now() - (index + 1) * 15 * 60 * 1000).toISOString(),
-            }));
+        const recentRows = (recentQueriesResponse.data ?? []) as KnowledgeRecentQueryRow[];
+        nextRecentQueries =
+          recentRows.length > 0
+            ? recentRows.map((item) => ({
+                id: item.id,
+                content: item.content,
+                createdAt: item.created_at,
+              }))
+            : [];
+      } else {
+        const [connectionsResponse, entitiesFallbackResponse, relationshipsResponse, docsResponse, chunksResponse] = await Promise.all([
+          supabase.from("api_connections").select("id,name").eq("tenant_id", workspaceTenantId),
+          supabase
+            .from("connection_entities")
+            .select("id,connection_id,name,entity_group,description,metadata,sensitivity,row_count,embedding_coverage,source_kind,updated_at")
+            .eq("tenant_id", workspaceTenantId)
+            .order("updated_at", { ascending: false })
+            .limit(300),
+          supabase
+            .from("connection_relationships")
+            .select("source_entity_id,target_entity_id")
+            .eq("tenant_id", workspaceTenantId)
+            .limit(1000),
+          supabase
+            .from("knowledge_documents")
+            .select("id,title,file_name,status,indexed_at,created_at")
+            .eq("tenant_id", workspaceTenantId)
+            .order("created_at", { ascending: false })
+            .limit(200),
+          supabase
+            .from("knowledge_document_chunks")
+            .select("id", { count: "exact", head: true })
+            .eq("tenant_id", workspaceTenantId)
+            .not("embedded_at", "is", null),
+        ]);
+
+        const connectionNameById = new Map<string, string>();
+        for (const row of connectionsResponse.data ?? []) {
+          connectionNameById.set(String(row.id), String(row.name ?? "Connection"));
+        }
+
+        const relationshipCountByEntity = new Map<string, number>();
+        for (const row of relationshipsResponse.data ?? []) {
+          const sourceId = String(row.source_entity_id ?? "");
+          const targetId = String(row.target_entity_id ?? "");
+          if (sourceId) relationshipCountByEntity.set(sourceId, (relationshipCountByEntity.get(sourceId) ?? 0) + 1);
+          if (targetId) relationshipCountByEntity.set(targetId, (relationshipCountByEntity.get(targetId) ?? 0) + 1);
+        }
+
+        const queryLower = query.trim().toLowerCase();
+        mappedEntities = (entitiesFallbackResponse.data ?? [])
+          .map((entity) => {
+            const metadata = entity.metadata && typeof entity.metadata === "object"
+              ? (entity.metadata as Record<string, unknown>)
+              : {};
+            const keyFields = Array.isArray(metadata?.top_fields)
+              ? metadata.top_fields.map((value) => String(value)).filter(Boolean).slice(0, 4)
+              : [];
+            return {
+              id: String(entity.id),
+              connectionId: entity.connection_id ? String(entity.connection_id) : null,
+              connectionName: connectionNameById.get(String(entity.connection_id ?? "")) ?? "Connection",
+              name: String(entity.name ?? "Entity"),
+              entityType: mapEntityType(String(entity.entity_group ?? "config")),
+              description: String(entity.description ?? "Indexed from connected data source."),
+              keyFields,
+              sensitivity: mapSensitivity(String(entity.sensitivity ?? "normal")),
+              rowCount: Number(entity.row_count ?? 0),
+              lastUpdated: String(entity.updated_at ?? new Date().toISOString()),
+              embeddingCoverage: Number(entity.embedding_coverage ?? 0),
+              sourceKind: String(entity.source_kind ?? "table"),
+              relationshipCount: relationshipCountByEntity.get(String(entity.id)) ?? 0,
+            } satisfies KnowledgeEntityCard;
+          })
+          .filter((entity) => {
+            if (!queryLower) return true;
+            const text = `${entity.name} ${entity.description} ${entity.keyFields.join(" ")} ${entity.connectionName}`.toLowerCase();
+            return text.includes(queryLower);
+          });
+
+        mappedEntities = applyKnowledgeChipFilter(mappedEntities, chip);
+
+        const indexedDocuments = (docsResponse.data ?? []).filter((row) => String(row.status ?? "").toLowerCase() === "indexed");
+        const documentsIndexed = indexedDocuments.length;
+        const embeddingsVectors = Number(chunksResponse.count ?? 0);
+        const averageCoverage =
+          mappedEntities.length > 0
+            ? Math.round(mappedEntities.reduce((sum, entity) => sum + entity.embeddingCoverage, 0) / mappedEntities.length)
+            : 0;
+
+        nextStats = {
+          totalEntities: mappedEntities.length,
+          embeddingsVectors,
+          documentsIndexed,
+          coveragePct: averageCoverage,
+          storageGb: Math.max(0, Number((embeddingsVectors * 0.0000012).toFixed(2))),
+        };
+
+        const sessionsResponse = await supabase
+          .from("chat_sessions")
+          .select("id")
+          .eq("tenant_id", workspaceTenantId)
+          .order("updated_at", { ascending: false })
+          .limit(25);
+        const sessionIds = (sessionsResponse.data ?? []).map((row) => String(row.id));
+        if (sessionIds.length > 0) {
+          const recentMessages = await supabase
+            .from("chat_messages")
+            .select("id,content,created_at")
+            .eq("role", "user")
+            .in("session_id", sessionIds)
+            .order("created_at", { ascending: false })
+            .limit(8);
+          nextRecentQueries = (recentMessages.data ?? []).map((item) => ({
+            id: String(item.id),
+            content: String(item.content ?? ""),
+            createdAt: String(item.created_at ?? new Date().toISOString()),
+          }));
+        }
+      }
+
+      if (nextRecentQueries.length === 0) {
+        nextRecentQueries = FALLBACK_RECENT_QUERIES.map((queryItem, index) => ({
+          id: `fallback-query-${index}`,
+          content: queryItem,
+          createdAt: new Date(Date.now() - (index + 1) * 15 * 60 * 1000).toISOString(),
+        }));
+      }
 
       if (latestRequestIdRef.current !== requestId) {
         return;

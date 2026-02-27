@@ -5,6 +5,32 @@ import path from "node:path";
 import { execSync } from "node:child_process";
 import { createClient } from "@supabase/supabase-js";
 
+function loadDotEnvFile(fileName = ".env") {
+  const filePath = path.join(process.cwd(), fileName);
+  if (!fs.existsSync(filePath)) return;
+  const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const idx = trimmed.indexOf("=");
+    if (idx <= 0) continue;
+    const key = trimmed.slice(0, idx).trim();
+    if (!key || Object.prototype.hasOwnProperty.call(process.env, key)) continue;
+    let value = trimmed.slice(idx + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    process.env[key] = value;
+  }
+}
+
+loadDotEnvFile(".env");
+const DEFAULT_FUNCTION_TIMEOUT_MS = Number(process.env.E2E_FUNCTION_TIMEOUT_MS || 20_000);
+const DEFAULT_SMOKE_TIMEOUT_MS = Number(process.env.E2E_SMOKE_TIMEOUT_MS || 180_000);
+
 const projectRef = process.env.VITE_SUPABASE_PROJECT_ID || process.env.PROJECT_ID || "";
 const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "";
 const publishableKey = process.env.VITE_SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY || "";
@@ -81,6 +107,15 @@ function authzExpected(errorMessage, fallback) {
   );
 }
 
+function withTimeout(promise, timeoutMs, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(`${label} timed out after ${Math.max(1, Math.floor(timeoutMs / 1000))}s`)), timeoutMs);
+    }),
+  ]);
+}
+
 async function runSmokeChecks() {
   const admin = createClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -118,7 +153,11 @@ async function runSmokeChecks() {
     if (provision.error) throw new Error(`Could not provision smoke workspace: ${provision.error.message}`);
 
     const invoke = async (fn, body = {}) => {
-      const { data, error } = await app.functions.invoke(fn, { body });
+      const { data, error } = await withTimeout(
+        app.functions.invoke(fn, { body }),
+        DEFAULT_FUNCTION_TIMEOUT_MS,
+        `Function '${fn}'`,
+      );
       let errorBody = "";
       if (error?.context && typeof error.context === "object" && typeof error.context.clone === "function") {
         try {
@@ -130,45 +169,52 @@ async function runSmokeChecks() {
       return { fn, data, error, errorBody };
     };
 
-    const results = [];
-    results.push(await invoke("onboarding-company-setup", { name: "Smoke Co", region: "us-east", industry: "Technology", companySize: "1-10", primaryUseCase: "Operations AI" }));
-    results.push(await invoke("test-data-connection", { connectionType: "custom_rest", payload: { baseUrl: "https://example.com" } }));
-    const createConnection = await invoke("create-data-connection", {
-      name: "Smoke REST",
-      type: "custom_rest",
-      baseUrl: "https://example.com",
-      authType: "none",
-      config: {},
-    });
-    results.push(createConnection);
+    const results = await withTimeout(
+      (async () => {
+        const rows = [];
+        rows.push(await invoke("onboarding-company-setup", { name: "Smoke Co", region: "us-east", industry: "Technology", companySize: "1-10", primaryUseCase: "Operations AI" }));
+        rows.push(await invoke("test-data-connection", { connectionType: "custom_rest", payload: { baseUrl: "https://example.com" } }));
+        const createConnection = await invoke("create-data-connection", {
+          name: "Smoke REST",
+          type: "custom_rest",
+          baseUrl: "https://example.com",
+          authType: "none",
+          config: {},
+        });
+        rows.push(createConnection);
 
-    const connectionId = String(createConnection.data?.connectionId || "");
-    if (connectionId) {
-      results.push(await invoke("run-schema-discovery", { connectionId, triggerReason: "smoke_test" }));
-      results.push(await invoke("connector-sync-dispatch", { connectionId, triggerReason: "smoke_test" }));
-    }
+        const connectionId = String(createConnection.data?.connectionId || "");
+        if (connectionId) {
+          rows.push(await invoke("run-schema-discovery", { connectionId, triggerReason: "smoke_test" }));
+          rows.push(await invoke("connector-sync-dispatch", { connectionId, triggerReason: "smoke_test" }));
+        }
 
-    results.push(await invoke("launch-workspace", { raciRules: [] }));
-    results.push(await invoke("agents-dashboard", {}));
-    results.push(await invoke("chat-execute", { prompt: "how many connections do i have?" }));
-    results.push(await invoke("raci-editor", { action: "list" }));
-    results.push(await invoke("raci-role-management", { action: "list" }));
-    results.push(await invoke("guardrails-risk-dashboard", { section: "overview" }));
-    results.push(await invoke("team-management", { operation: "get_payload" }));
-    results.push(await invoke("knowledge-reindex-dispatch", {}));
-    results.push(await invoke("notification-settings", { operation: "get_payload" }));
-    results.push(await invoke("api-keys-management", { operation: "get_payload" }));
-    results.push(await invoke("tenant-billing-dashboard", {}));
-    results.push(await invoke("billing-invoices", { operation: "get_payload" }));
-    results.push(await invoke("insights-feed", { operation: "list" }));
-    results.push(await invoke("widget-integration", { operation: "get_payload" }));
-    results.push(await invoke("marketplace-directory", { operation: "get_payload" }));
-    results.push(await invoke("public-pricing", { interval: "monthly" }));
-    results.push(await invoke("admin-console", { operation: "get_payload" }));
-    results.push(await invoke("platform-admin-tenants", { operation: "get_payload" }));
-    results.push(await invoke("platform-admin-revenue", { operation: "get_payload" }));
-    results.push(await invoke("platform-admin-infrastructure", { operation: "get_payload" }));
-    results.push(await invoke("send-team-invites", { invites: [{ email: `invite-${Date.now()}@example.com`, role: "member" }] }));
+        rows.push(await invoke("launch-workspace", { raciRules: [] }));
+        rows.push(await invoke("agents-dashboard", {}));
+        rows.push(await invoke("chat-execute", { prompt: "how many connections do i have?" }));
+        rows.push(await invoke("raci-editor", { action: "list" }));
+        rows.push(await invoke("raci-role-management", { action: "list" }));
+        rows.push(await invoke("guardrails-risk-dashboard", { section: "overview" }));
+        rows.push(await invoke("team-management", { operation: "get_payload" }));
+        rows.push(await invoke("knowledge-reindex-dispatch", {}));
+        rows.push(await invoke("notification-settings", { operation: "get_payload" }));
+        rows.push(await invoke("api-keys-management", { operation: "get_payload" }));
+        rows.push(await invoke("tenant-billing-dashboard", {}));
+        rows.push(await invoke("billing-invoices", { operation: "get_payload" }));
+        rows.push(await invoke("insights-feed", { operation: "list" }));
+        rows.push(await invoke("widget-integration", { operation: "get_payload" }));
+        rows.push(await invoke("marketplace-directory", { operation: "get_payload" }));
+        rows.push(await invoke("public-pricing", { interval: "monthly" }));
+        rows.push(await invoke("admin-console", { operation: "get_payload" }));
+        rows.push(await invoke("platform-admin-tenants", { operation: "get_payload" }));
+        rows.push(await invoke("platform-admin-revenue", { operation: "get_payload" }));
+        rows.push(await invoke("platform-admin-infrastructure", { operation: "get_payload" }));
+        rows.push(await invoke("send-team-invites", { invites: [{ email: `invite-${Date.now()}@example.com`, role: "member" }] }));
+        return rows;
+      })(),
+      DEFAULT_SMOKE_TIMEOUT_MS,
+      "E2E smoke checks",
+    );
 
     let hardFailCount = 0;
     let warnCount = 0;

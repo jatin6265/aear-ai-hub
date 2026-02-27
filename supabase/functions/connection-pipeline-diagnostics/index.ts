@@ -64,7 +64,13 @@ function isMissingColumnError(error: { code?: string | null; message?: string | 
   if (!error) return false;
   const code = String(error.code ?? "");
   const message = String(error.message ?? "").toLowerCase();
-  return code === "42703" || code === "PGRST204" || (message.includes("column") && message.includes("does not exist"));
+  return (
+    code === "42703" ||
+    code === "PGRST204" ||
+    (message.includes("column") && message.includes("does not exist")) ||
+    (message.includes("column") && message.includes("schema cache")) ||
+    (message.includes("could not find") && message.includes("column"))
+  );
 }
 
 async function loadConnectionsWithFallback(auth: AuthedClient, tenantId: string, connectionId: string) {
@@ -85,15 +91,41 @@ async function loadConnectionsWithFallback(auth: AuthedClient, tenantId: string,
 
   let fallbackQuery = auth.supabase
     .from("api_connections")
-    .select("id,name,type,status,last_synced_at,updated_at")
+    .select("id,name,type,status,last_synced_at,updated_at,created_at")
     .eq("tenant_id", tenantId)
     .order("updated_at", { ascending: false })
     .limit(150);
   if (connectionId) fallbackQuery = fallbackQuery.eq("id", connectionId);
   const fallback = await fallbackQuery;
-  if (fallback.error) throw fallback.error;
+  if (!fallback.error) {
+    return (fallback.data ?? []).map((row) => ({
+      ...row,
+      health: "healthy",
+      schema_detected: false,
+      schema_entities_count: 0,
+      embeddings_indexed: 0,
+      last_error: null,
+      next_sync_at: null,
+      analysis_started_at: null,
+      analysis_completed_at: null,
+      sync_frequency: "hourly",
+      is_archived: false,
+      updated_at: row.updated_at ?? row.created_at ?? null,
+    }));
+  }
+  if (!isMissingColumnError(fallback.error)) throw fallback.error;
 
-  return (fallback.data ?? []).map((row) => ({
+  let legacyQuery = auth.supabase
+    .from("api_connections")
+    .select("id,name,type,status,last_synced_at,created_at")
+    .eq("tenant_id", tenantId)
+    .order("created_at", { ascending: false })
+    .limit(150);
+  if (connectionId) legacyQuery = legacyQuery.eq("id", connectionId);
+  const legacy = await legacyQuery;
+  if (legacy.error) throw legacy.error;
+
+  return (legacy.data ?? []).map((row) => ({
     ...row,
     health: "healthy",
     schema_detected: false,
@@ -105,6 +137,7 @@ async function loadConnectionsWithFallback(auth: AuthedClient, tenantId: string,
     analysis_completed_at: null,
     sync_frequency: "hourly",
     is_archived: false,
+    updated_at: row.created_at ?? null,
   }));
 }
 

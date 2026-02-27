@@ -3,6 +3,27 @@ import { Navigate, Outlet } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { ensureUserWorkspace, tenantNeedsOnboarding } from "@/lib/auth-provisioning";
 
+const ONBOARDING_GUARD_TIMEOUT_MS = 15_000;
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new Error(`${label} timed out after ${Math.floor(timeoutMs / 1000)}s`));
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 export default function OnboardingGuard() {
   const { user, session, loading } = useAuth();
   const [checking, setChecking] = useState(true);
@@ -19,11 +40,20 @@ export default function OnboardingGuard() {
 
     const runCheck = async () => {
       try {
-        const workspace = await ensureUserWorkspace(user);
-        const requiresOnboarding = await tenantNeedsOnboarding(workspace.tenantId);
+        const workspace = await withTimeout(
+          ensureUserWorkspace(user),
+          ONBOARDING_GUARD_TIMEOUT_MS,
+          "Workspace provisioning check",
+        );
+        const requiresOnboarding = await withTimeout(
+          tenantNeedsOnboarding(workspace.tenantId),
+          ONBOARDING_GUARD_TIMEOUT_MS,
+          "Onboarding status check",
+        );
         if (!active) return;
         setNeedsOnboarding(requiresOnboarding);
-      } catch {
+      } catch (error) {
+        console.warn("OnboardingGuard fallback mode:", error);
         if (!active) return;
         setNeedsOnboarding(false);
       } finally {
