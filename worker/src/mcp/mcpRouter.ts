@@ -16,6 +16,13 @@ export type McpToolResult = {
   error?: string;
 };
 
+type RemoteTool = {
+  name: string;
+  description?: string;
+  input_schema?: Record<string, unknown>;
+  output_schema?: Record<string, unknown>;
+};
+
 /**
  * Routes tool calls to the correct MCP server, with governance enforcement.
  * Critical: MCP tools MUST pass RACI + risk checks before execution.
@@ -62,11 +69,22 @@ export class McpRouter {
       : await this.findServerForTool(call.toolName, servers);
 
     if (!server) {
+      await this.logAudit(call, 'blocked', null, `No MCP server found for ${call.toolName}`);
       return { success: false, error: `No active MCP server found for tool: ${call.toolName}` };
     }
 
     // 3. Execute the tool call via MCP protocol
     try {
+      const serverTools = await this.listToolsFromServer(server);
+      const declaredTool = serverTools.find((tool) => tool.name === call.toolName);
+      if (!declaredTool) {
+        await this.logAudit(call, 'blocked', null, `Unknown tool on server: ${call.toolName}`);
+        return {
+          success: false,
+          error: `Unknown tool "${call.toolName}" for server "${server.name}"`,
+        };
+      }
+
       const response = await fetch(`${server.url}/tools/call`, {
         method: 'POST',
         headers: {
@@ -86,7 +104,8 @@ export class McpRouter {
         throw new Error(`MCP server returned ${response.status}: ${errorText}`);
       }
 
-      const result = await response.json() as unknown;
+      const rawResult = await response.json() as unknown;
+      const result = this.validateToolResult(call, declaredTool, rawResult);
       await this.logAudit(call, 'success', result, null);
 
       return { success: true, data: result };
@@ -105,29 +124,32 @@ export class McpRouter {
     description: string;
     serverId: string;
     serverName: string;
+    inputSchema?: Record<string, unknown>;
+    outputSchema?: Record<string, unknown>;
   }>> {
     const registry = getMcpRegistry();
     const servers = await registry.getActiveServers(tenantId);
-    const allTools: Array<{ name: string; description: string; serverId: string; serverName: string }> = [];
+    const allTools: Array<{
+      name: string;
+      description: string;
+      serverId: string;
+      serverName: string;
+      inputSchema?: Record<string, unknown>;
+      outputSchema?: Record<string, unknown>;
+    }> = [];
 
     for (const server of servers) {
       try {
-        const response = await fetch(`${server.url}/tools/list`, {
-          headers: server.auth_config.token
-            ? { Authorization: `Bearer ${server.auth_config.token}` }
-            : {},
-        });
-        if (response.ok) {
-          const data = await response.json() as { tools?: Array<{ name: string; description?: string }> };
-          const tools = data.tools ?? [];
-          for (const tool of tools) {
-            allTools.push({
-              name: tool.name,
-              description: tool.description ?? '',
-              serverId: server.id,
-              serverName: server.name,
-            });
-          }
+        const tools = await this.listToolsFromServer(server);
+        for (const tool of tools) {
+          allTools.push({
+            name: tool.name,
+            description: tool.description ?? '',
+            serverId: server.id,
+            serverName: server.name,
+            inputSchema: isRecord(tool.input_schema) ? tool.input_schema : undefined,
+            outputSchema: isRecord(tool.output_schema) ? tool.output_schema : undefined,
+          });
         }
       } catch {
         // Server unreachable - skip
@@ -156,15 +178,40 @@ export class McpRouter {
 
   private async listToolsFromServer(
     server: { url: string; auth_config: Record<string, unknown> }
-  ): Promise<Array<{ name: string }>> {
+  ): Promise<Array<RemoteTool>> {
     const response = await fetch(`${server.url}/tools/list`, {
       headers: server.auth_config.token
         ? { Authorization: `Bearer ${server.auth_config.token}` }
         : {},
     });
     if (!response.ok) return [];
-    const data = await response.json() as { tools?: Array<{ name: string }> };
-    return data.tools ?? [];
+    const data = await response.json() as { tools?: Array<RemoteTool> };
+    return (data.tools ?? []).filter((tool) => String(tool?.name ?? '').trim().length > 0);
+  }
+
+  private validateToolResult(call: McpToolCall, tool: RemoteTool, rawResult: unknown): unknown {
+    if (!isRecord(rawResult) && !Array.isArray(rawResult)) {
+      throw new Error(`Tool output must be JSON object/array for ${call.toolName}`);
+    }
+
+    const schema = isRecord(tool.output_schema) ? tool.output_schema : null;
+    if (!schema) return rawResult;
+
+    if (schema.type === 'object' && !isRecord(rawResult)) {
+      throw new Error(`Tool output schema mismatch for ${call.toolName}: expected object`);
+    }
+
+    if (isRecord(rawResult) && Array.isArray(schema.required)) {
+      for (const key of schema.required) {
+        const field = String(key ?? '').trim();
+        if (!field) continue;
+        if (!(field in rawResult)) {
+          throw new Error(`Tool output schema mismatch for ${call.toolName}: missing "${field}"`);
+        }
+      }
+    }
+
+    return rawResult;
   }
 
   private async logAudit(
@@ -186,6 +233,10 @@ export class McpRouter {
       error_message: error ?? null,
     });
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 let instance: McpRouter | null = null;

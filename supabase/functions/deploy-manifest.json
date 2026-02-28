@@ -57,6 +57,19 @@
     "agent-regenerate",
     "stripe-webhook",
     "webhook-slack",
-    "generate-insight"
+    "generate-insight",
+    "provision-user-workspace",
+    "send-invitation",
+    "accept-invitation",
+    "discover-connection",
+    "chat-completion",
+    "embed-content",
+    "execute-approved-action",
+    "request-approval",
+    "generate-nl-sql",
+    "create-checkout-session",
+    "report-usage",
+    "check-plan-limits",
+    "razorpay-webhook"
   ]
 }

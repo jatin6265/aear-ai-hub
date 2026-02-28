@@ -38,6 +38,7 @@ const Team = lazy(() => import("./pages/Team"));
 const ApiKeys = lazy(() => import("./pages/ApiKeys"));
 const Billing = lazy(() => import("./pages/Billing"));
 const BillingUpgrade = lazy(() => import("./pages/BillingUpgrade"));
+const Usage = lazy(() => import("./pages/Usage"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 const NotificationSettings = lazy(() => import("./pages/NotificationSettings"));
 const WidgetIntegration = lazy(() => import("./pages/WidgetIntegration"));
@@ -112,6 +113,7 @@ const App = () => (
                 <Route path="/dashboard/knowledge" element={<KnowledgeBase />} />
                 <Route path="/dashboard/tools" element={<Tools />} />
                 <Route path="/dashboard/agents" element={<Agents />} />
+                <Route path="/dashboard/agents/create" element={<Agents />} />
                 <Route path="/dashboard/agents/:id" element={<AgentDetail />} />
                 <Route path="/dashboard/marketplace" element={<Marketplace />} />
                 <Route path="/dashboard/raci" element={<Raci />} />
@@ -123,6 +125,7 @@ const App = () => (
                 <Route path="/dashboard/api-keys" element={<ApiKeys />} />
                 <Route path="/dashboard/billing" element={<Billing />} />
                 <Route path="/dashboard/billing/upgrade" element={<BillingUpgrade />} />
+                <Route path="/dashboard/usage" element={<Usage />} />
                 <Route path="/dashboard/settings" element={<SettingsPage />} />
                 <Route path="/dashboard/settings/notifications" element={<NotificationSettings />} />
                 <Route path="/dashboard/settings/widget" element={<WidgetIntegration />} />
@@ -130,6 +133,13 @@ const App = () => (
                 <Route element={<AdminOnlyRoute />}>
                   <Route path="/dashboard/admin" element={<AdminConsole />} />
                   <Route path="/dashboard/admin/analytics" element={<AdminAnalytics />} />
+                  <Route path="/dashboard/admin/raci" element={<Raci />} />
+                  <Route path="/dashboard/admin/policies" element={<Guardrails />} />
+                  <Route path="/dashboard/admin/approvals" element={<Approvals />} />
+                  <Route path="/dashboard/admin/audit" element={<AuditLogs />} />
+                  <Route path="/dashboard/admin/team" element={<Team />} />
+                  <Route path="/dashboard/admin/api-keys" element={<ApiKeys />} />
+                  <Route path="/dashboard/admin/widget" element={<WidgetIntegration />} />
                 </Route>
               </Route>
             </Route>
@@ -145,7 +155,7 @@ const App = () => (
             <Route path="/guardrails" element={<Navigate to="/dashboard/guardrails" replace />} />
             <Route path="/audit" element={<Navigate to="/dashboard/audit" replace />} />
             <Route path="/approvals" element={<Navigate to="/dashboard/approvals" replace />} />
-            <Route path="/usage" element={<Navigate to="/dashboard/billing" replace />} />
+            <Route path="/usage" element={<Navigate to="/dashboard/usage" replace />} />
             <Route path="/settings" element={<Navigate to="/dashboard/settings" replace />} />
             <Route path="/settings/notifications" element={<Navigate to="/dashboard/settings/notifications" replace />} />
             <Route path="/settings/widget" element={<Navigate to="/dashboard/settings/widget" replace />} />

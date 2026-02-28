@@ -22,9 +22,11 @@ This will:
 ## Pre-flight checks
 
 1. `scripts/verify-backend.sh`
-2. `scripts/verify-runtime-wiring.sh --project-ref <supabase-project-ref>`
-3. `npm run build`
-4. Confirm required secrets are set in Supabase Edge Function secrets.
+2. `scripts/verify-worker-runtime-drift.sh`
+3. `scripts/verify-worker-deploy-readiness.sh`
+4. `scripts/verify-runtime-wiring.sh --project-ref <supabase-project-ref>`
+5. `npm run build`
+6. Confirm required secrets are set in Supabase Edge Function secrets.
 
 Optional strict check:
 
@@ -43,3 +45,52 @@ Claim coverage reference:
 3. Verify `connector_jobs` status transitions.
 4. Open chat and execute one SQL + one knowledge query.
 5. Trigger a Stripe webhook test event and verify `billing_events` row.
+6. Trigger a Razorpay webhook test event and verify `billing_events` row with `provider=razorpay`.
+7. Install an MCP-capable integration (e.g. Slack/HubSpot) and verify:
+   - `tenant_integration_installs` row is `installed`
+   - `mcp_servers` row created for tenant when MCP URL exists
+   - `tool_registry` receives auto-generated integration tools
+   - `ingestion_queue` receives initial sync/bootstrap event
+
+## Staging promotion gates
+
+1. Deploy the exact same migration and function artifacts used in `dev`.
+2. Run `scripts/verify-runtime-wiring.sh --strict --project-ref <staging-project-ref>`.
+3. Run smoke checks for connection dispatch, chat execution, approvals, Stripe webhook, and Razorpay webhook.
+4. Require manual sign-off before production promotion.
+
+## Rollback strategy
+
+1. Functions rollback: redeploy previous `deploy-manifest.json` function versions from the last successful tag.
+2. App rollback: redeploy previous frontend build artifact.
+3. Database rollback: apply forward-fix migration only; do not run destructive schema rollbacks on shared environments.
+
+## Railway worker deployment (Phase 1)
+
+1. Provision a Railway service from this repository root.
+2. Set config file to `railway.worker.json` for the worker service.
+3. Configure environment variables:
+   - `SUPABASE_URL`
+   - `SUPABASE_SERVICE_ROLE_KEY`
+   - `CONNECTOR_WORKER_TOKEN`
+   - `OPENAI_API_KEY`
+   - `OPENAI_MODEL`
+   - `OPENAI_EMBEDDING_MODEL=text-embedding-3-small`
+   - `WORKER_RUNTIME_MODE=polling`
+4. Run readiness verification locally before deploy:
+   - `scripts/verify-worker-deploy-readiness.sh`
+5. Deploy and confirm worker logs show:
+   - Supabase connectivity probe success
+   - poll loop processing `connector_jobs`
+   - no auth/secret mismatch warnings
+
+Detailed checklist: [`docs/operations/worker-railway.md`](/Users/jatin/Desktop/aear-ai-hub/docs/operations/worker-railway.md)
+
+## Redis cutover (Phase 2-ready path)
+
+1. Provision Upstash/AWS Redis and set `REDIS_URL` in Railway worker env.
+2. Switch `WORKER_RUNTIME_MODE=queue` when queue-first runtime is enabled.
+3. Validate with strict checks:
+   - `scripts/verify-worker-deploy-readiness.sh --strict`
+   - `scripts/verify-runtime-wiring.sh --strict --project-ref <project-ref>`
+4. Scale worker replicas after queue-mode cutover.

@@ -77,6 +77,9 @@ required_sql_symbols=(
   "FUNCTION public.enqueue_connector_sync"
   "FUNCTION public.execute_tenant_sql_governed"
   "FUNCTION public.evaluate_action_policy"
+  "FUNCTION public.hybrid_search"
+  "FUNCTION public.bootstrap_tenant_integration_runtime"
+  "FUNCTION public.teardown_tenant_integration_runtime"
   "FUNCTION public.search_knowledge_documents_hybrid"
   "FUNCTION public.regenerate_agents_for_tenant"
   "FUNCTION public.schedule_knowledge_embedding_reindex"
@@ -147,6 +150,17 @@ if [[ -n "$dead_anchor_hits" ]]; then
   echo "$dead_anchor_hits"
   if [[ $STRICT -eq 1 ]]; then
     echo "Strict mode enabled: failing because dead anchor links were found."
+    exit 1
+  fi
+fi
+
+echo "Checking dual-runtime worker drift contracts"
+if [[ -x "$ROOT_DIR/scripts/verify-worker-runtime-drift.sh" ]]; then
+  "$ROOT_DIR/scripts/verify-worker-runtime-drift.sh"
+else
+  echo "Warning: worker drift verification script missing or not executable"
+  if [[ $STRICT -eq 1 ]]; then
+    echo "Strict mode enabled: worker drift verification script is required."
     exit 1
   fi
 fi

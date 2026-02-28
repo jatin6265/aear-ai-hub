@@ -30,10 +30,12 @@ serve(async (req) => {
 
   let provider: Provider;
   let label = "default";
+  let integrationCode = "";
   try {
-    const body = (await req.json()) as { provider?: string; label?: string };
+    const body = (await req.json()) as { provider?: string; label?: string; integrationCode?: string };
     provider = toProvider(body?.provider);
     label = String(body?.label ?? "default").trim() || "default";
+    integrationCode = String(body?.integrationCode ?? "").trim().toLowerCase();
   } catch (error) {
     return errorResponse(400, "Invalid OAuth start payload", error instanceof Error ? error.message : null);
   }
@@ -47,6 +49,7 @@ serve(async (req) => {
     userId: auth.user.id,
     provider: canonicalProvider,
     label,
+    integrationCode,
     exp: Math.floor(Date.now() / 1000) + 10 * 60,
   });
 

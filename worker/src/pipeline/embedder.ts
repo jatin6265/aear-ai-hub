@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 import { getSupabaseService } from '../lib/supabase';
+import { EMBEDDING_MODEL } from '../lib/ai-config';
 
-const EMBEDDING_MODEL = 'text-embedding-3-small';
 const BATCH_SIZE = 100;
 
 export class Embedder {

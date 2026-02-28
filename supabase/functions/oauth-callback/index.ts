@@ -2,8 +2,25 @@ import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { corsHeaders, errorResponse, jsonResponse } from "../_shared/http.ts";
 import { encryptJson, verifyState } from "../_shared/crypto.ts";
 import { getServiceClient } from "../_shared/service.ts";
+import { bootstrapTenantIntegrationRuntime } from "../_shared/integration-runtime.ts";
 
 type Provider = "google" | "slack" | "notion" | "zoho";
+
+function resolveIntegrationCode(state: Record<string, unknown>, provider: Provider, scope: string | null): string {
+  const explicit = String(state.integrationCode ?? "").trim().toLowerCase();
+  if (explicit) return explicit;
+
+  if (provider === "slack") return "slack";
+  if (provider === "notion") return "notion";
+  if (provider === "zoho") return "zoho_crm";
+  if (provider === "google") {
+    const scopeText = String(scope ?? "").toLowerCase();
+    if (scopeText.includes("gmail")) return "gmail";
+    if (scopeText.includes("drive")) return "google_drive";
+    return "gmail";
+  }
+  return provider;
+}
 
 function env(name: string, fallback?: string) {
   const value = Deno.env.get(name) ?? fallback ?? "";
@@ -224,20 +241,32 @@ serve(async (req) => {
       rotated_by: userId,
     });
 
+    const integrationCode = resolveIntegrationCode(state, provider, token.scope);
+    const runtimeProvisioning = await bootstrapTenantIntegrationRuntime({
+      supabase: service.supabase,
+      tenantId,
+      userId,
+      integrationCode,
+      credentialId: credential.id,
+    });
+
     const successRedirect = Deno.env.get("OAUTH_SUCCESS_REDIRECT");
     if (successRedirect) {
       const redirect = new URL(successRedirect);
       redirect.searchParams.set("provider", provider);
       redirect.searchParams.set("status", "connected");
+      redirect.searchParams.set("integration", integrationCode);
       return Response.redirect(redirect.toString(), 302);
     }
 
     return jsonResponse(200, {
       ok: true,
       provider,
+      integrationCode,
       tenantId,
       credentialId: credential.id,
       expiresAt,
+      runtimeProvisioning,
     });
   } catch (error) {
     return errorResponse(500, "OAuth callback processing failed", error instanceof Error ? error.message : null);

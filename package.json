@@ -12,6 +12,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "backend:verify": "bash scripts/verify-backend.sh",
+    "backend:verify-worker-drift": "bash scripts/verify-worker-runtime-drift.sh",
+    "backend:verify-worker-deploy": "bash scripts/verify-worker-deploy-readiness.sh",
     "backend:verify-runtime": "bash scripts/verify-runtime-wiring.sh",
     "backend:deploy": "bash scripts/deploy-backend.sh",
     "setup:e2e": "bash scripts/setup-e2e.sh --no-deploy",

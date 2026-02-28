@@ -75,3 +75,9 @@ scripts/setup-e2e.sh --no-deploy
 
 - `docs/operations/environments.md`
 - `docs/operations/deployment-runbook.md`
+
+## Additional billing env vars
+
+- `RAZORPAY_KEY_ID`
+- `RAZORPAY_KEY_SECRET`
+- `RAZORPAY_WEBHOOK_SECRET`

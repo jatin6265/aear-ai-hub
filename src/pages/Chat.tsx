@@ -3205,7 +3205,7 @@ export default function Chat() {
           }
         }
       } catch (error) {
-        // Use transparent fallback when edge execution fails; avoid synthetic SQL answers.
+        // Use transparent fallback when edge execution fails and clearly communicate degraded mode.
         try {
           knowledgeResult = await searchKnowledgeSources(prompt);
         } catch (error) {
@@ -3227,7 +3227,7 @@ export default function Chat() {
             ].join("\n")
           : [
               "I couldn't reach the live execution backend for this request.",
-              "No synthetic SQL answer was generated.",
+              "No fallback query result was generated.",
               "",
               `Backend error: ${backendReason}`,
               "Please verify `chat-execute` deployment/secrets and retry.",

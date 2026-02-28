@@ -90,7 +90,7 @@ CRITICAL RULES:
 - risk_policies must be conservative for enterprise use`;
 
     const response = await this.openai.chat.completions.create({
-      model: process.env.OPENAI_MODEL ?? 'gpt-4o',
+      model: process.env.OPENAI_MODEL ?? 'gpt-4.1-mini',
       messages: [
         { role: 'system', content: systemPrompt },
         {
@@ -120,21 +120,94 @@ Return ONLY valid JSON matching this exact schema:
         },
       ],
       temperature: 0.3,
-      response_format: { type: 'json_object' },
+      response_format: {
+        type: 'json_schema',
+        json_schema: {
+          name: 'agent_blueprint',
+          strict: true,
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            required: [
+              'name',
+              'description',
+              'model',
+              'system_prompt',
+              'tool_ids',
+              'mcp_server_ids',
+              'risk_policies',
+              'memory_config',
+            ],
+            properties: {
+              name: { type: 'string', minLength: 3, maxLength: 120 },
+              description: { type: 'string', minLength: 10, maxLength: 500 },
+              model: { type: 'string' },
+              system_prompt: { type: 'string', minLength: 20 },
+              tool_ids: { type: 'array', items: { type: 'string' } },
+              mcp_server_ids: { type: 'array', items: { type: 'string' } },
+              risk_policies: {
+                type: 'object',
+                additionalProperties: false,
+                required: ['max_risk_level', 'requires_approval_above', 'allowed_tool_categories'],
+                properties: {
+                  max_risk_level: { type: 'string', enum: ['low', 'medium', 'high', 'critical'] },
+                  requires_approval_above: { type: 'string', enum: ['low', 'medium', 'high'] },
+                  allowed_tool_categories: { type: 'array', items: { type: 'string' } },
+                },
+              },
+              memory_config: {
+                type: 'object',
+                additionalProperties: false,
+                required: ['short_term_enabled', 'long_term_enabled', 'semantic_search_enabled', 'context_window_turns'],
+                properties: {
+                  short_term_enabled: { type: 'boolean' },
+                  long_term_enabled: { type: 'boolean' },
+                  semantic_search_enabled: { type: 'boolean' },
+                  context_window_turns: { type: 'integer', minimum: 1, maximum: 50 },
+                },
+              },
+            },
+          },
+        },
+      } as any,
     });
 
     const content = response.choices[0]?.message?.content ?? '{}';
-    const blueprint = JSON.parse(content) as AgentBlueprint;
+    const blueprint = JSON.parse(content) as Partial<AgentBlueprint>;
 
     // Validate that tool_ids only contain real tools
     const validToolCodes = new Set((tools ?? []).map((t: Record<string, unknown>) => t.code as string));
-    blueprint.tool_ids = blueprint.tool_ids.filter((id) => validToolCodes.has(id));
+    const filteredToolIds = Array.isArray(blueprint.tool_ids)
+      ? blueprint.tool_ids.filter((id) => validToolCodes.has(id))
+      : [];
 
     // Validate MCP server IDs
     const validMcpIds = new Set((mcpServers ?? []).map((s: Record<string, unknown>) => s.id as string));
-    blueprint.mcp_server_ids = blueprint.mcp_server_ids.filter((id) => validMcpIds.has(id));
+    const filteredMcpIds = Array.isArray(blueprint.mcp_server_ids)
+      ? blueprint.mcp_server_ids.filter((id) => validMcpIds.has(id))
+      : [];
 
-    return blueprint;
+    return {
+      name: String(blueprint.name ?? 'Generated Agent').slice(0, 120),
+      description: String(blueprint.description ?? 'Auto-generated OpsAI agent'),
+      model: String(blueprint.model ?? process.env.OPENAI_MODEL ?? 'gpt-4.1-mini'),
+      system_prompt: String(blueprint.system_prompt ?? 'You are an OpsAI enterprise agent.'),
+      tool_ids: filteredToolIds,
+      mcp_server_ids: filteredMcpIds,
+      risk_policies: {
+        max_risk_level: normalizeRiskLevel(blueprint.risk_policies?.max_risk_level),
+        requires_approval_above: normalizeApprovalThreshold(blueprint.risk_policies?.requires_approval_above),
+        allowed_tool_categories: Array.isArray(blueprint.risk_policies?.allowed_tool_categories)
+          ? blueprint.risk_policies!.allowed_tool_categories
+          : [],
+      },
+      memory_config: {
+        short_term_enabled: Boolean(blueprint.memory_config?.short_term_enabled ?? true),
+        long_term_enabled: Boolean(blueprint.memory_config?.long_term_enabled ?? true),
+        semantic_search_enabled: Boolean(blueprint.memory_config?.semantic_search_enabled ?? true),
+        context_window_turns: clampTurns(blueprint.memory_config?.context_window_turns),
+      },
+    };
   }
 
   /**
@@ -169,6 +242,28 @@ Return ONLY valid JSON matching this exact schema:
 
     return (data as Record<string, unknown>).id as string;
   }
+}
+
+function normalizeRiskLevel(value: unknown): 'low' | 'medium' | 'high' | 'critical' {
+  const normalized = String(value ?? '').toLowerCase();
+  if (normalized === 'low' || normalized === 'medium' || normalized === 'high' || normalized === 'critical') {
+    return normalized;
+  }
+  return 'medium';
+}
+
+function normalizeApprovalThreshold(value: unknown): 'low' | 'medium' | 'high' {
+  const normalized = String(value ?? '').toLowerCase();
+  if (normalized === 'low' || normalized === 'medium' || normalized === 'high') {
+    return normalized;
+  }
+  return 'medium';
+}
+
+function clampTurns(value: unknown): number {
+  const turns = Number(value ?? 10);
+  if (!Number.isFinite(turns)) return 10;
+  return Math.max(1, Math.min(50, Math.floor(turns)));
 }
 
 let instance: AgentBuilder | null = null;

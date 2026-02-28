@@ -1,6 +1,11 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { corsHeaders, errorResponse, jsonResponse } from "../_shared/http.ts";
 import { getAuthedClient } from "../_shared/auth.ts";
+import { getServiceClient } from "../_shared/service.ts";
+import {
+  bootstrapTenantIntegrationRuntime,
+  teardownTenantIntegrationRuntime,
+} from "../_shared/integration-runtime.ts";
 
 type Operation = "get_payload" | "install" | "configure" | "uninstall";
 
@@ -65,6 +70,15 @@ serve(async (req) => {
   };
 
   try {
+    const { data: tenantIdRaw, error: tenantError } = await auth.supabase.rpc("get_user_tenant_id");
+    const tenantId = String(tenantIdRaw ?? "").trim();
+    if (tenantError || !tenantId) {
+      return errorResponse(400, "Could not resolve tenant", tenantError?.message ?? null);
+    }
+
+    const service = getServiceClient();
+    if (!service.ok) return service.response;
+
     if (operation === "install" || operation === "configure" || operation === "uninstall") {
       const integrationCode = clean(body.integrationCode || body.code).toLowerCase();
       if (!integrationCode) return errorResponse(400, "integrationCode is required");
@@ -75,6 +89,32 @@ serve(async (req) => {
       });
 
       if (error) return errorResponse(400, `Could not ${operation} integration`, error.message);
+
+      let runtimeProvisioning: unknown = null;
+      try {
+        if (operation === "install" || operation === "configure") {
+          runtimeProvisioning = await bootstrapTenantIntegrationRuntime({
+            supabase: service.supabase,
+            tenantId,
+            userId: auth.user.id,
+            integrationCode,
+            credentialId: null,
+          });
+        } else if (operation === "uninstall") {
+          runtimeProvisioning = await teardownTenantIntegrationRuntime({
+            supabase: service.supabase,
+            tenantId,
+            userId: auth.user.id,
+            integrationCode,
+          });
+        }
+      } catch (runtimeError) {
+        return errorResponse(
+          500,
+          `Integration ${operation} completed but runtime bootstrap failed`,
+          runtimeError instanceof Error ? runtimeError.message : null,
+        );
+      }
 
       let payload;
       try {
@@ -90,6 +130,7 @@ serve(async (req) => {
         ok: true,
         operation,
         result: data,
+        runtimeProvisioning,
         payload,
       });
     }

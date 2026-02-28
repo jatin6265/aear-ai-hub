@@ -22,6 +22,9 @@ Connect any API or database. Auto-build RAG pipelines. Enforce RACI governance. 
 4. `Execute safely`
    - Contract checks: `execute_tenant_sql_governed`, chat action approval path, audit logging
    - Validation command: `bash scripts/verify-runtime-wiring.sh`
+5. `Scale billing providers`
+   - Contract checks: `create-checkout-session`, `stripe-webhook`, `razorpay-webhook`, `report-usage`
+   - Validation command: `bash scripts/verify-runtime-wiring.sh --strict`
 
 ## Notes
 
