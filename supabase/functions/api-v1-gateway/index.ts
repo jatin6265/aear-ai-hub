@@ -52,7 +52,7 @@ async function resolveCaller(req: Request): Promise<{ ok: true; caller: Caller }
   const token = parseBearer(req);
   if (!token) return { ok: false, response: errorResponse(401, "Missing bearer token") };
 
-  if (token.startsWith("aear_") || token.startsWith("ak_")) {
+  if (token.startsWith("opsai_") || token.startsWith("ak_")) {
     const hash = await sha256Hex(token);
     const { data: keyRow, error: keyError } = await service.supabase
       .from("api_keys")

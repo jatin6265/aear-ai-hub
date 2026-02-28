@@ -20,6 +20,7 @@ import {
   Users,
   UserRound,
   Workflow,
+  Wrench,
   BookOpenText,
   CheckSquare,
   BarChart3,
@@ -65,6 +66,7 @@ const NAV_SECTIONS: Array<{ section: string; items: NavItem[] }> = [
       { to: '/dashboard/connections', label: 'Connections', icon: Plug },
       { to: '/dashboard/knowledge', label: 'Knowledge Base', icon: BookOpenText },
       { to: '/dashboard/agents', label: 'Agents', icon: Workflow },
+      { to: '/dashboard/tools', label: 'Tool Registry', icon: Wrench },
       { to: '/dashboard/marketplace', label: 'Marketplace', icon: Store },
     ],
   },
@@ -170,7 +172,7 @@ function SidebarContent({ workspaceName, userName, userEmail, pendingApprovals, 
                 <Bot className="h-4 w-4 text-white" />
               </span>
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-semibold text-white">AEAR</span>
+                <span className="block truncate text-sm font-semibold text-white">OpsAI</span>
                 <span className="block truncate text-xs text-slate-400">{workspaceName}</span>
               </span>
               <ChevronDown className="h-4 w-4 text-slate-400" />
@@ -283,7 +285,7 @@ export default function AppLayout() {
   const userName =
     typeof user?.user_metadata?.full_name === 'string' && user.user_metadata.full_name.trim()
       ? user.user_metadata.full_name.trim()
-      : 'AEAR User';
+      : 'OpsAI User';
 
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -293,7 +295,7 @@ export default function AppLayout() {
           navigate('/dashboard/chat');
         }
         window.setTimeout(() => {
-          window.dispatchEvent(new Event('aear:focus-chat-input'));
+          window.dispatchEvent(new Event('opsai:focus-chat-input'));
         }, 40);
       }
     };
@@ -395,7 +397,7 @@ export default function AppLayout() {
                       navigate('/dashboard/chat');
                     }
                     window.setTimeout(() => {
-                      window.dispatchEvent(new Event('aear:focus-chat-input'));
+                      window.dispatchEvent(new Event('opsai:focus-chat-input'));
                     }, 40);
                   }}
                 />

@@ -349,7 +349,7 @@ BEGIN
         c.display_name,
         c.category,
         lower(regexp_replace(c.category, '[^a-z0-9]+', '', 'g')) AS category_key,
-        COALESCE(c.summary, 'Extend AEAR with secure enterprise integration workflows.') AS summary,
+        COALESCE(c.summary, 'Extend OpsAI with secure enterprise integration workflows.') AS summary,
         c.connection_type,
         c.access_tier,
         c.rating,

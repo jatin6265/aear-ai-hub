@@ -297,7 +297,7 @@ BEGIN
   END IF;
 
   SELECT jsonb_build_object(
-    'companyName', COALESCE(bp.company_name, t.name, 'AEAR Workspace'),
+    'companyName', COALESCE(bp.company_name, t.name, 'OpsAI Workspace'),
     'addressLine1', COALESCE(bp.address_line_1, ''),
     'addressLine2', COALESCE(bp.address_line_2, ''),
     'city', COALESCE(bp.city, ''),

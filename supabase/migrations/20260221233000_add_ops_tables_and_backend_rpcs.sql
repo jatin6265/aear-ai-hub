@@ -396,7 +396,7 @@ BEGIN
     RAISE EXCEPTION 'Key name is required';
   END IF;
 
-  v_plain_key := 'aear_' || encode(gen_random_bytes(24), 'hex');
+  v_plain_key := 'opsai_' || encode(gen_random_bytes(24), 'hex');
   key_prefix := left(v_plain_key, 16);
   v_hash := encode(digest(v_plain_key, 'sha256'), 'hex');
 

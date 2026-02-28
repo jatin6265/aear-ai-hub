@@ -56,10 +56,10 @@ export async function sendInviteEmail(payload: InviteEmailPayload) {
   const customMessage = payload.customMessage ? escapeHtml(payload.customMessage) : "";
   const expiresText = formatExpiry(payload.expiresAt);
 
-  const subject = `${payload.inviterName || "A teammate"} invited you to join ${payload.companyName} on AEAR`;
+  const subject = `${payload.inviterName || "A teammate"} invited you to join ${payload.companyName} on OpsAI`;
   const html = `
     <div style="font-family:Arial,sans-serif;line-height:1.5;color:#111827">
-      <h2 style="margin:0 0 12px">You are invited to join ${company} on AEAR</h2>
+      <h2 style="margin:0 0 12px">You are invited to join ${company} on OpsAI</h2>
       <p style="margin:0 0 10px">${inviter} invited you as <strong>${role}</strong>.</p>
       ${customMessage ? `<p style="margin:0 0 10px"><em>${customMessage}</em></p>` : ""}
       <p style="margin:0 0 14px">Accept your invitation:</p>
@@ -72,7 +72,7 @@ export async function sendInviteEmail(payload: InviteEmailPayload) {
     </div>
   `;
   const text = [
-    `You are invited to join ${payload.companyName} on AEAR.`,
+    `You are invited to join ${payload.companyName} on OpsAI.`,
     `${payload.inviterName || "A teammate"} invited you as ${payload.role || "member"}.`,
     payload.customMessage ? `Message: ${payload.customMessage}` : "",
     `Accept invitation: ${inviteUrl}`,

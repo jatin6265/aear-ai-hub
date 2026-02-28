@@ -186,6 +186,7 @@ function normalizeConfig(
     if (!baseUrl || !validateUrl(baseUrl)) {
       throw new Error("REST connections require a valid Base URL");
     }
+    config.base_url = baseUrl;
 
     const openApiUrl = asString(config.openapi_url ?? config.swagger_url ?? config.swaggerUrl);
     if (openApiUrl && !validateUrl(openApiUrl)) {

@@ -111,10 +111,10 @@ const ACCESS_MODE_OPTIONS: Array<{ value: AccessMode; label: string; description
 
 const DEFAULT_PAYLOAD: WidgetPayload = {
   tenantId: "",
-  tenantName: "AEAR Workspace",
+  tenantName: "OpsAI Workspace",
   widget: {
     id: "",
-    name: "AEAR Assistant Widget",
+    name: "OpsAI Assistant Widget",
     slug: "assistant",
     status: "active",
     appearance: {
@@ -210,10 +210,10 @@ function normalizePayload(rawValue: unknown): WidgetPayload {
 
   return {
     tenantId: String(raw.tenantId ?? "").trim(),
-    tenantName: String(raw.tenantName ?? "AEAR Workspace").trim() || "AEAR Workspace",
+    tenantName: String(raw.tenantName ?? "OpsAI Workspace").trim() || "OpsAI Workspace",
     widget: {
       id: String(widget?.id ?? ""),
-      name: String(widget?.name ?? "AEAR Assistant Widget").trim() || "AEAR Assistant Widget",
+      name: String(widget?.name ?? "OpsAI Assistant Widget").trim() || "OpsAI Assistant Widget",
       slug: String(widget?.slug ?? "assistant").trim() || "assistant",
       status: String(widget?.status ?? "active").trim() || "active",
       appearance: {
@@ -390,20 +390,20 @@ export default function WidgetIntegration() {
 
   const scriptSnippet = useMemo(
     () =>
-      `<script src="https://cdn.aear.io/widget.js"></script>\n<script>\n  window.AEAR.init(${JSON.stringify(embedInitConfig, null, 2)});\n</script>`,
+      `<script src="https://cdn.opsai.io/widget.js"></script>\n<script>\n  window.OpsAI.init(${JSON.stringify(embedInitConfig, null, 2)});\n</script>`,
     [embedInitConfig],
   );
 
   const reactSnippet = useMemo(
     () =>
-      `import { useEffect } from "react";\n\nexport function AearWidgetEmbed() {\n  useEffect(() => {\n    const script = document.createElement("script");\n    script.src = "https://cdn.aear.io/widget.js";\n    script.async = true;\n    script.onload = () => window.AEAR?.init(${JSON.stringify(embedInitConfig, null, 4)});\n    document.body.appendChild(script);\n\n    return () => {\n      document.body.removeChild(script);\n    };\n  }, []);\n\n  return null;\n}`,
+      `import { useEffect } from "react";\n\nexport function OpsAiWidgetEmbed() {\n  useEffect(() => {\n    const script = document.createElement("script");\n    script.src = "https://cdn.opsai.io/widget.js";\n    script.async = true;\n    script.onload = () => window.OpsAI?.init(${JSON.stringify(embedInitConfig, null, 4)});\n    document.body.appendChild(script);\n\n    return () => {\n      document.body.removeChild(script);\n    };\n  }, []);\n\n  return null;\n}`,
     [embedInitConfig],
   );
 
   const iframeSnippet = useMemo(() => {
     const tenant = payload.tenantId || "tenant_id";
     const slug = payload.widget.slug || "assistant";
-    return `<iframe src="https://app.aear.io/embed/${tenant}/${slug}?mode=${form.accessMode}" title="AEAR Assistant" width="380" height="640" style="border:0;border-radius:16px;"></iframe>`;
+    return `<iframe src="https://app.opsai.io/embed/${tenant}/${slug}?mode=${form.accessMode}" title="OpsAI Assistant" width="380" height="640" style="border:0;border-radius:16px;"></iframe>`;
   }, [form.accessMode, payload.tenantId, payload.widget.slug]);
 
   const activeSnippetText = activeSnippet === "react" ? reactSnippet : activeSnippet === "iframe" ? iframeSnippet : scriptSnippet;
@@ -521,8 +521,8 @@ export default function WidgetIntegration() {
       </nav>
 
       <header className="space-y-2">
-        <h1 className="text-2xl font-bold tracking-tight">Embed AEAR in Your Website or App</h1>
-        <p className="text-sm text-muted-foreground">Add the AEAR AI assistant to any website with a single script tag.</p>
+        <h1 className="text-2xl font-bold tracking-tight">Embed OpsAI in Your Website or App</h1>
+        <p className="text-sm text-muted-foreground">Add the OpsAI AI assistant to any website with a single script tag.</p>
       </header>
 
       {loading ? (
@@ -603,7 +603,7 @@ export default function WidgetIntegration() {
                   id="widget-name"
                   value={form.name}
                   onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-                  placeholder="AEAR Assistant Widget"
+                  placeholder="OpsAI Assistant Widget"
                 />
               </div>
 
@@ -775,7 +775,7 @@ export default function WidgetIntegration() {
                       : [
                           "Generate a short-lived JWT in your backend.",
                           "Never expose your signing secret in client-side code.",
-                          "Pass token in window.AEAR.init when mode is jwt.",
+                          "Pass token in window.OpsAI.init when mode is jwt.",
                         ]
                     ).map((line) => (
                       <li key={line} className="flex gap-2">

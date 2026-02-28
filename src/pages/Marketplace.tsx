@@ -115,7 +115,7 @@ function normalizeItem(value: unknown): IntegrationItem | null {
     code,
     name,
     category: String(row.category ?? "Other"),
-    description: String(row.description ?? "Extend AEAR with this integration."),
+    description: String(row.description ?? "Extend OpsAI with this integration."),
     connectionType: (["rest_api", "oauth", "webhook", "hybrid"].includes(connectionType)
       ? connectionType
       : "rest_api") as IntegrationItem["connectionType"],
@@ -345,7 +345,7 @@ export default function Marketplace() {
     <div className="space-y-6 animate-fade-in">
       <header className="space-y-1">
         <h1 className="text-2xl font-bold tracking-tight text-slate-900">Integration Marketplace</h1>
-        <p className="text-sm text-muted-foreground">Browse tools to extend AEAR&apos;s capabilities.</p>
+        <p className="text-sm text-muted-foreground">Browse tools to extend OpsAI&apos;s capabilities.</p>
       </header>
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -548,10 +548,10 @@ export default function Marketplace() {
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-sm font-semibold text-violet-900">Building an integration?</p>
-            <p className="text-xs text-violet-700">Submit it to our marketplace and extend AEAR for every workspace.</p>
+            <p className="text-xs text-violet-700">Submit it to our marketplace and extend OpsAI for every workspace.</p>
           </div>
           <Button variant="outline" className="border-violet-300 bg-white text-violet-800 hover:bg-violet-100" asChild>
-            <a href="mailto:integrations@aear.io?subject=AEAR%20Marketplace%20Submission">
+            <a href="mailto:integrations@opsai.io?subject=OpsAI%20Marketplace%20Submission">
               Submit your integration
               <ArrowRight className="h-4 w-4" />
             </a>

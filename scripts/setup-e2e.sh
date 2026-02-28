@@ -38,7 +38,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-echo "AEAR end-to-end setup started"
+echo "OpsAI end-to-end setup started"
 echo "Theme: Your Enterprise AI Operating Layer"
 
 if ! command -v npm >/dev/null 2>&1; then
@@ -94,7 +94,7 @@ fi
 echo "Running frontend build"
 npm run build
 
-echo "AEAR end-to-end setup complete"
+echo "OpsAI end-to-end setup complete"
 echo "Next:"
 echo "1) Start app: npm run dev"
 echo "2) Start worker (separate terminal): npm run worker:run"

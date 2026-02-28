@@ -326,7 +326,7 @@ export default function InviteAcceptPage() {
         ) : (
           <div className="space-y-5">
             <header className="space-y-1">
-              <h1 className="text-2xl font-bold text-slate-900">You&apos;ve been invited to join {invitation.tenantName} on AEAR</h1>
+              <h1 className="text-2xl font-bold text-slate-900">You&apos;ve been invited to join {invitation.tenantName} on OpsAI</h1>
               <p className="text-sm text-slate-600">
                 Invite for <span className="font-medium text-slate-800">{invitation.email}</span> as {invitation.role}.
               </p>

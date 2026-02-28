@@ -87,7 +87,7 @@ export default function SignUpPage() {
   };
 
   return (
-    <AuthSplitLayout title="Create your workspace" subtitle="Set up AEAR for your organization in minutes.">
+    <AuthSplitLayout title="Create your workspace" subtitle="Set up OpsAI for your organization in minutes.">
       <motion.form
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}

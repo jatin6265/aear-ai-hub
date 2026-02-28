@@ -86,7 +86,7 @@ BEGIN
     'invoices', v_invoices,
     'latestFailed', v_latest_failed,
     'yearlyTotalSpentCents', v_total_spent_cents,
-    'downloadZipName', 'aear-invoices-' || v_year::text || '.zip'
+    'downloadZipName', 'opsai-invoices-' || v_year::text || '.zip'
   );
 END;
 $$;
@@ -134,7 +134,7 @@ BEGIN
   END IF;
 
   SELECT
-    COALESCE(bp.company_name, t.name, 'AEAR Workspace'),
+    COALESCE(bp.company_name, t.name, 'OpsAI Workspace'),
     COALESCE(bp.address_line_1, ''),
     COALESCE(bp.address_line_2, ''),
     COALESCE(bp.city, ''),

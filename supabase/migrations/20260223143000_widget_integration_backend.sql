@@ -29,7 +29,7 @@ BEGIN
   )
   VALUES (
     p_tenant_id,
-    'AEAR Assistant Widget',
+    'OpsAI Assistant Widget',
     'assistant',
     'active',
     ARRAY[]::text[],
@@ -67,7 +67,7 @@ SET search_path = public
 AS $$
 DECLARE
   v_tenant_id uuid := public.get_user_tenant_id();
-  v_tenant_name text := 'AEAR Workspace';
+  v_tenant_name text := 'OpsAI Workspace';
   v_widget record;
   v_agents jsonb := '[]'::jsonb;
 BEGIN
@@ -122,10 +122,10 @@ BEGIN
 
   RETURN jsonb_build_object(
     'tenantId', v_tenant_id,
-    'tenantName', COALESCE(v_tenant_name, 'AEAR Workspace'),
+    'tenantName', COALESCE(v_tenant_name, 'OpsAI Workspace'),
     'widget', jsonb_build_object(
       'id', v_widget.id,
-      'name', COALESCE(v_widget.name, 'AEAR Assistant Widget'),
+      'name', COALESCE(v_widget.name, 'OpsAI Assistant Widget'),
       'slug', COALESCE(v_widget.slug, 'assistant'),
       'status', COALESCE(v_widget.status, 'active'),
       'appearance', COALESCE(v_widget.appearance, '{}'::jsonb),
@@ -138,7 +138,7 @@ BEGIN
     'jwtInstructions', jsonb_build_array(
       'Generate a short-lived JWT on your server with tenant_id and widget_slug claims.',
       'Sign using your server secret (never expose the signing secret in client code).',
-      'Pass the JWT to window.AEAR.init({ mode: \"jwt\", token: \"...\" }) when embedding.'
+      'Pass the JWT to window.OpsAI.init({ mode: \"jwt\", token: \"...\" }) when embedding.'
     )
   );
 END;

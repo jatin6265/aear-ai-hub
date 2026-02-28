@@ -1,4 +1,4 @@
--- AEAR Agent OS big-bang continuation: runtime execution ledger, tool registry, credential vault,
+-- OpsAI Agent OS big-bang continuation: runtime execution ledger, tool registry, credential vault,
 -- usage/credits accounting, compatibility views, and core orchestration RPCs.
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;

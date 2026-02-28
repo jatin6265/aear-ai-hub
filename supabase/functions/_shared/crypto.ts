@@ -50,8 +50,8 @@ export type EncryptedPayload = {
 };
 
 export async function encryptJson(payload: unknown): Promise<EncryptedPayload> {
-  const secret = resolveSecret("CREDENTIAL_ENCRYPTION_KEY");
-  const keyVersion = (Deno.env.get("CREDENTIAL_ENCRYPTION_KEY_VERSION") ?? "v1").trim() || "v1";
+  const secret = resolveSecret("CONNECTOR_ENCRYPTION_KEY");
+  const keyVersion = (Deno.env.get("CONNECTOR_ENCRYPTION_KEY_VERSION") ?? "v1").trim() || "v1";
   const key = await deriveAesKey(secret);
 
   const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -71,7 +71,7 @@ export async function decryptJson(payload: {
   iv: string;
   ciphertext: string;
 }): Promise<unknown> {
-  const secret = resolveSecret("CREDENTIAL_ENCRYPTION_KEY");
+  const secret = resolveSecret("CONNECTOR_ENCRYPTION_KEY");
   const key = await deriveAesKey(secret);
 
   const iv = base64ToBytes(payload.iv);

@@ -821,7 +821,7 @@ export default function Team() {
                 id="invite-message"
                 rows={4}
                 maxLength={300}
-                placeholder="Welcome to AEAR. Join our workspace to collaborate with AI agents and governed actions."
+                placeholder="Welcome to OpsAI. Join our workspace to collaborate with AI agents and governed actions."
                 value={inviteMessage}
                 onChange={(event) => setInviteMessage(event.target.value)}
               />

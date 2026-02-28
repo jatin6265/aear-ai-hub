@@ -41,7 +41,7 @@ export default function LandingPage() {
             <div className="w-8 h-8 rounded-lg gradient-cta flex items-center justify-center">
               <Bot className="w-4 h-4 text-accent-foreground" />
             </div>
-            <span className="text-lg font-bold text-hero tracking-tight">AEAR</span>
+            <span className="text-lg font-bold text-hero tracking-tight">OpsAI</span>
           </div>
           <div className="hidden md:flex items-center gap-8 text-sm text-hero-muted">
             <a href="#features" className="hover:text-hero transition-colors">Features</a>
@@ -175,7 +175,7 @@ export default function LandingPage() {
               Everything your AI runtime needs
             </motion.h2>
             <motion.p variants={fadeUp} custom={2} className="text-slate-600 max-w-2xl mx-auto">
-              From API discovery to governance enforcement, AEAR handles the full lifecycle of autonomous enterprise operations.
+              From API discovery to governance enforcement, OpsAI handles the full lifecycle of autonomous enterprise operations.
             </motion.p>
           </motion.div>
 
@@ -329,7 +329,7 @@ export default function LandingPage() {
             Ready to automate your enterprise?
           </motion.h2>
           <motion.p variants={fadeUp} custom={1} className="text-hero-muted mb-8 text-lg">
-            Join hundreds of teams using AEAR to connect, govern, and execute with AI.
+            Join hundreds of teams using OpsAI to connect, govern, and execute with AI.
           </motion.p>
           <motion.div variants={fadeUp} custom={2}>
             <Link to="/auth/signup">
@@ -351,7 +351,7 @@ export default function LandingPage() {
                 <div className="w-7 h-7 rounded-md gradient-cta flex items-center justify-center">
                   <Bot className="w-3.5 h-3.5 text-accent-foreground" />
                 </div>
-                <span className="text-sm font-bold text-hero">AEAR</span>
+                <span className="text-sm font-bold text-hero">OpsAI</span>
               </div>
               <p className="text-xs text-hero-muted leading-relaxed">
                 Autonomous Enterprise AI Runtime for modern teams.
@@ -383,7 +383,7 @@ export default function LandingPage() {
             </div>
           </div>
           <div className="border-t border-white/5 pt-8 text-center">
-            <p className="text-xs text-hero-muted">© 2026 AEAR. All rights reserved.</p>
+            <p className="text-xs text-hero-muted">© 2026 OpsAI. All rights reserved.</p>
           </div>
         </div>
       </footer>

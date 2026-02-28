@@ -98,6 +98,17 @@ function safeSlug(value: string) {
     .replace(/^-+|-+$/g, "") || "entity";
 }
 
+function normalizeEntitySourceKind(value: unknown) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized === "endpoint") return "endpoint";
+  if (normalized === "document") return "document";
+  // Persist non-SQL connector entities using the existing relational-compatible kind.
+  if (["collection", "sheet", "view", "dataset", "entity", "object", "table"].includes(normalized)) {
+    return "table";
+  }
+  return "table";
+}
+
 function estimateTokenCount(content: string) {
   return Math.max(1, Math.ceil(content.length / 4));
 }
@@ -327,6 +338,8 @@ serve(async (req) => {
 
   if (finalStatus === "success") {
     const entityMap = new Map<string, string>();
+    let persistedEntityCount = 0;
+    const entityInsertErrors: string[] = [];
 
     const { data: existingEntities } = await service.supabase
       .from("connection_entities")
@@ -365,7 +378,7 @@ serve(async (req) => {
           tenant_id: job.tenant_id,
           connection_id: job.connection_id,
           name,
-          source_kind: entity.sourceKind ?? "table",
+          source_kind: normalizeEntitySourceKind(entity.sourceKind),
           entity_group: entity.entityGroup ?? "master_data",
           row_count: Number(entity.rowCount ?? 0),
           risk_level: entity.riskLevel ?? "low",
@@ -379,10 +392,12 @@ serve(async (req) => {
 
       if (entityError) {
         console.error("Could not insert synced entity", entityError.message);
+        entityInsertErrors.push(`${name}: ${entityError.message}`);
         continue;
       }
 
       entityMap.set(name, insertedEntity.id);
+      persistedEntityCount += 1;
 
       const columns = Array.isArray(entity.columns) ? entity.columns : [];
       if (columns.length > 0) {
@@ -474,7 +489,7 @@ serve(async (req) => {
           file_type: "schema",
           source_type: "connection_schema",
           storage_path: `${schemaPathPrefix}${entityId}.md`,
-          external_url: `aear://connections/${job.connection_id}/entities/${entityId}`,
+          external_url: `opsai://connections/${job.connection_id}/entities/${entityId}`,
           excerpt,
           status: "indexed",
           indexed_at: now,
@@ -548,10 +563,16 @@ serve(async (req) => {
             if (queuedRows.length > 0) {
               const queueEmbeddings = await service.supabase
                 .from("embedding_jobs")
-                .upsert(queuedRows, { onConflict: "tenant_id,idempotency_key" })
+                .insert(queuedRows)
                 .select("id");
+
               if (queueEmbeddings.error) {
-                console.error("Could not queue schema embedding jobs", queueEmbeddings.error.message);
+                if (queueEmbeddings.error.code === "23505") {
+                  // Treat duplicate idempotency rows as already queued.
+                  queuedEmbeddingJobs = queuedRows.length;
+                } else {
+                  console.error("Could not queue schema embedding jobs", queueEmbeddings.error.message);
+                }
               } else {
                 queuedEmbeddingJobs = queueEmbeddings.data?.length ?? queuedRows.length;
               }
@@ -561,16 +582,24 @@ serve(async (req) => {
       }
     }
 
-    const tablesCount = entities.length;
-    const entitiesCount = entities.length;
+    const tablesCount = persistedEntityCount;
+    const entitiesCount = persistedEntityCount;
     const hasDiscoveredSchema = entitiesCount > 0;
     schemaEmptyOnSuccess = !hasDiscoveredSchema;
 
     syncDetails.generated_documents = generatedSchemaDocuments;
     syncDetails.embedding_jobs_queued = queuedEmbeddingJobs;
     syncDetails.discovered_entities = entitiesCount;
+    syncDetails.discovered_entities_payload = entities.length;
+    if (entityInsertErrors.length > 0) {
+      syncDetails.entity_insert_errors = entityInsertErrors.slice(0, 5);
+    }
     if (schemaEmptyOnSuccess) {
-      syncDetails.warning = "Schema discovery completed but returned zero entities";
+      const insertHint =
+        entityInsertErrors.length > 0
+          ? ` First insert error: ${entityInsertErrors[0]}`
+          : "";
+      syncDetails.warning = `Schema discovery completed but persisted zero entities.${insertHint}`;
       syncDetails.stage = "schema_empty";
     }
 

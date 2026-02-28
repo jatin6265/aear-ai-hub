@@ -256,11 +256,11 @@ AS $$
             regexp_replace(
               regexp_replace(
                 COALESCE(m.content, ''),
-                '<!--AEAR_SQL_RESULT:[^>]+-->',
+                '<!--OpsAI_SQL_RESULT:[^>]+-->',
                 '',
                 'g'
               ),
-              '<!--AEAR_KNOWLEDGE_RESULT:[^>]+-->',
+              '<!--OpsAI_KNOWLEDGE_RESULT:[^>]+-->',
               '',
               'g'
             )
@@ -355,8 +355,8 @@ BEGIN
     SELECT EXISTS (
       SELECT 1
       FROM session_messages m
-      WHERE m.content LIKE '%<!--AEAR_SQL_RESULT:%'
-         OR m.content LIKE '%<!--AEAR_KNOWLEDGE_RESULT:%'
+      WHERE m.content LIKE '%<!--OpsAI_SQL_RESULT:%'
+         OR m.content LIKE '%<!--OpsAI_KNOWLEDGE_RESULT:%'
     ) AS has_data
   ),
   fallback_sources AS (
@@ -377,7 +377,7 @@ BEGIN
       AND (SELECT has_data FROM has_data_queries)
   ),
   agent_rollup AS (
-    SELECT COALESCE(array_agg(DISTINCT COALESCE(tool_used, 'AEAR Core')), ARRAY[]::text[]) AS active_agents
+    SELECT COALESCE(array_agg(DISTINCT COALESCE(tool_used, 'OpsAI Core')), ARRAY[]::text[]) AS active_agents
     FROM session_messages
     WHERE role = 'assistant'
   ),
@@ -387,8 +387,8 @@ BEGIN
     WHERE role = 'assistant'
       AND (
         risk_level IS NOT NULL
-        OR content LIKE '%<!--AEAR_SQL_RESULT:%'
-        OR content LIKE '%<!--AEAR_KNOWLEDGE_RESULT:%'
+        OR content LIKE '%<!--OpsAI_SQL_RESULT:%'
+        OR content LIKE '%<!--OpsAI_KNOWLEDGE_RESULT:%'
       )
   )
   SELECT

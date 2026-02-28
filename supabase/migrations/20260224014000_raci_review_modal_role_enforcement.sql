@@ -329,7 +329,7 @@ BEGIN
       AND revoked_at IS NULL
       AND expires_at > now();
 
-    v_plain_token := 'aear_exec_' || encode(gen_random_bytes(24), 'hex');
+    v_plain_token := 'opsai_exec_' || encode(gen_random_bytes(24), 'hex');
     v_prefix := left(v_plain_token, 16);
     v_hash := encode(digest(v_plain_token, 'sha256'), 'hex');
     v_token_expires := now() + interval '15 minutes';

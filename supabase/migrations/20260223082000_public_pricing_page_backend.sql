@@ -289,7 +289,7 @@ BEGIN
     ('Can I switch plans later?', 'Yes. You can upgrade or downgrade at any time. Changes apply immediately, and billing is prorated where applicable.', 10, true),
     ('Do you offer a free trial?', 'Yes. Starter, Pro, and Business include a free trial period before billing starts.', 20, true),
     ('What happens if I exceed my token limit?', 'Your workspace will be rate-limited for token-heavy operations until the next cycle or until you upgrade.', 30, true),
-    ('Is my data isolated per workspace?', 'Yes. AEAR enforces tenant isolation with row-level security and governed execution paths.', 40, true),
+    ('Is my data isolated per workspace?', 'Yes. OpsAI enforces tenant isolation with row-level security and governed execution paths.', 40, true),
     ('Do you support annual contracts?', 'Yes. Annual billing applies a 20% savings compared to monthly pricing.', 50, true),
     ('How do Enterprise contracts work?', 'Enterprise plans are custom. We scope your requirements for infra, security, and support, then provide a tailored proposal.', 60, true)
   ON CONFLICT (sort_order)

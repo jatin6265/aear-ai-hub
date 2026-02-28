@@ -78,7 +78,7 @@ export function WidgetPreviewMock({ config, open, onToggle, className }: Props) 
         >
           <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2">
             <div>
-              <p className="text-sm font-semibold text-slate-800">AEAR Assistant</p>
+              <p className="text-sm font-semibold text-slate-800">OpsAI Assistant</p>
               <p className="text-[11px] text-slate-500">{config.tenantName}</p>
             </div>
             <button type="button" onClick={onToggle} className="rounded-md p-1 text-slate-500 hover:bg-slate-100">

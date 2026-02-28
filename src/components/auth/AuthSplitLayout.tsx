@@ -20,7 +20,7 @@ export default function AuthSplitLayout({ title, subtitle, children }: AuthSplit
           <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/15 backdrop-blur">
             <Bot className="h-5 w-5" />
           </span>
-          <span className="text-xl font-semibold tracking-tight">AEAR</span>
+          <span className="text-xl font-semibold tracking-tight">OpsAI</span>
         </Link>
 
         <div className="relative z-10 max-w-lg">
@@ -32,7 +32,7 @@ export default function AuthSplitLayout({ title, subtitle, children }: AuthSplit
             Connect any API or database. Auto-build RAG pipelines. Enforce RACI governance. Execute safely.
           </p>
         </div>
-        <p className="relative z-10 text-sm text-white/70">AEAR protects critical actions with policy-native AI orchestration.</p>
+        <p className="relative z-10 text-sm text-white/70">OpsAI protects critical actions with policy-native AI orchestration.</p>
       </aside>
 
       <main className="flex items-center justify-center p-6 lg:p-10">
@@ -42,7 +42,7 @@ export default function AuthSplitLayout({ title, subtitle, children }: AuthSplit
               <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-[#5B21B6] to-[#7C3AED] text-white">
                 <Bot className="h-4 w-4" />
               </span>
-              <span className="text-lg font-semibold">AEAR</span>
+              <span className="text-lg font-semibold">OpsAI</span>
             </Link>
           </div>
 

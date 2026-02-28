@@ -23,6 +23,7 @@ const InsightAnomalyDetail = lazy(() => import("./pages/InsightAnomalyDetail"));
 const Connections = lazy(() => import("./pages/Connections"));
 const ConnectionSchemaDetail = lazy(() => import("./pages/ConnectionSchemaDetail"));
 const KnowledgeBase = lazy(() => import("./pages/KnowledgeBase"));
+const Tools = lazy(() => import("./pages/Tools"));
 const Agents = lazy(() => import("./pages/Agents"));
 const AgentDetail = lazy(() => import("./pages/AgentDetail"));
 const Marketplace = lazy(() => import("./pages/Marketplace"));
@@ -109,6 +110,7 @@ const App = () => (
                 <Route path="/dashboard/connections" element={<Connections />} />
                 <Route path="/dashboard/connections/:id" element={<ConnectionSchemaDetail />} />
                 <Route path="/dashboard/knowledge" element={<KnowledgeBase />} />
+                <Route path="/dashboard/tools" element={<Tools />} />
                 <Route path="/dashboard/agents" element={<Agents />} />
                 <Route path="/dashboard/agents/:id" element={<AgentDetail />} />
                 <Route path="/dashboard/marketplace" element={<Marketplace />} />

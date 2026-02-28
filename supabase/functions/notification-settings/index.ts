@@ -177,7 +177,7 @@ serve(async (req) => {
             event: "notification.test",
             sentAt: new Date().toISOString(),
             source: "settings.notifications",
-            message: "This is a sample test notification from AEAR.",
+            message: "This is a sample test notification from OpsAI.",
           };
           const json = JSON.stringify(payload);
 
@@ -191,9 +191,9 @@ serve(async (req) => {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
-                "X-AEAR-Event": "notification.test",
-                "X-AEAR-Timestamp": timestamp,
-                ...(signature ? { "X-AEAR-Signature": signature } : {}),
+                "X-OpsAI-Event": "notification.test",
+                "X-OpsAI-Timestamp": timestamp,
+                ...(signature ? { "X-OpsAI-Signature": signature } : {}),
               },
               body: json,
             });

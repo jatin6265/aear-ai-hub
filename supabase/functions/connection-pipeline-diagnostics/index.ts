@@ -249,8 +249,8 @@ serve(async (req) => {
 
   let jobsData: Array<Record<string, unknown>> = [];
   let syncData: Array<Record<string, unknown>> = [];
-  let agentsResult: any = null;
-  let embeddingResult: any = null;
+  let agentsResult: unknown = null;
+  let embeddingResult: unknown = null;
 
   try {
     const [loadedJobs, loadedSync, loadedAgents, loadedEmbedding] = await Promise.all([

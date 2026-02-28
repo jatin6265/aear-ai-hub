@@ -33,7 +33,7 @@ const DEFAULT_CONFIG: TestConfig = {
   primaryColor: "#7c3aed",
   buttonSize: "medium",
   initialMessage: "How can I help you today?",
-  tenantName: "AEAR Workspace",
+  tenantName: "OpsAI Workspace",
   enabledAgentNames: [],
   accessMode: "public",
   features: {
@@ -87,7 +87,7 @@ function parseConfig(raw: string | null): TestConfig {
       primaryColor: normalizeColor(data.primaryColor),
       buttonSize: normalizeSize(data.buttonSize),
       initialMessage: String(data.initialMessage ?? "How can I help you today?"),
-      tenantName: String(data.tenantName ?? "AEAR Workspace"),
+      tenantName: String(data.tenantName ?? "OpsAI Workspace"),
       enabledAgentNames: Array.isArray(data.enabledAgentNames)
         ? data.enabledAgentNames.map((item) => String(item ?? "").trim()).filter(Boolean)
         : [],

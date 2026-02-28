@@ -3101,7 +3101,7 @@ async function runWebhookDeliveries() {
         headers: {
           "Content-Type": "application/json",
           ...(delivery.headers || {}),
-          ...(signature ? { "x-aear-signature": signature } : {}),
+          ...(signature ? { "x-opsai-signature": signature } : {}),
         },
         body: payloadText,
       });
@@ -3186,7 +3186,7 @@ async function mainLoop() {
   }
 
   console.log(
-    `AEAR worker started (id=${workerId}, poll=${pollIntervalMs}ms, staleRecovery=${staleRecoveryMinutes}m, syncDispatch=${syncDispatchIntervalMs}ms, callbackTimeout=${connectorCallbackTimeoutMs}ms, callbackAttempts=${connectorProgressCallbackMaxAttempts}/${connectorCallbackMaxAttempts})`,
+    `OpsAI worker started (id=${workerId}, poll=${pollIntervalMs}ms, staleRecovery=${staleRecoveryMinutes}m, syncDispatch=${syncDispatchIntervalMs}ms, callbackTimeout=${connectorCallbackTimeoutMs}ms, callbackAttempts=${connectorProgressCallbackMaxAttempts}/${connectorCallbackMaxAttempts})`,
   );
   while (true) {
     await runWorkerStep("recover_stale_jobs", recoverStaleJobs);

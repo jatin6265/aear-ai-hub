@@ -222,7 +222,7 @@ function normalizePayload(value: unknown): AnalyticsPayload {
           const row = asRecord(item);
           if (!row) return null;
           const date = String(row.date ?? "").trim();
-          const agent = String(row.agent ?? "AEAR Core").trim() || "AEAR Core";
+          const agent = String(row.agent ?? "OpsAI Core").trim() || "OpsAI Core";
           if (!date) return null;
           return {
             date,
@@ -300,7 +300,7 @@ function normalizePayload(value: unknown): AnalyticsPayload {
         .map((item) => {
           const row = asRecord(item);
           if (!row) return null;
-          const agent = String(row.agent ?? "AEAR Core").trim() || "AEAR Core";
+          const agent = String(row.agent ?? "OpsAI Core").trim() || "OpsAI Core";
           return {
             agent,
             queries: Number(row.queries ?? 0) || 0,
@@ -687,7 +687,7 @@ export default function AdminAnalytics() {
   const handleCsvExport = () => {
     const lines: string[] = [];
 
-    lines.push("AEAR Tenant Analytics Report");
+    lines.push("OpsAI Tenant Analytics Report");
     lines.push(`Range,${payload.range.from},${payload.range.to}`);
     lines.push("");
 
@@ -756,7 +756,7 @@ export default function AdminAnalytics() {
       <html>
         <head>
           <meta charset="utf-8" />
-          <title>AEAR Analytics Report</title>
+          <title>OpsAI Analytics Report</title>
           <style>
             body { font-family: Arial, sans-serif; margin: 24px; color: #0f172a; }
             h1 { margin: 0 0 8px; }
@@ -771,7 +771,7 @@ export default function AdminAnalytics() {
           </style>
         </head>
         <body>
-          <h1>AEAR Tenant Analytics</h1>
+          <h1>OpsAI Tenant Analytics</h1>
           <p>Report range: ${escapeHtml(payload.range.from)} to ${escapeHtml(payload.range.to)}</p>
 
           <div class="grid">

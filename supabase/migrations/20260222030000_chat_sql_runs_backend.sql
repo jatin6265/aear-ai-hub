@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS public.chat_sql_runs (
   session_id uuid NOT NULL REFERENCES public.chat_sessions(id) ON DELETE CASCADE,
   requested_by uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   connection_id uuid REFERENCES public.api_connections(id) ON DELETE SET NULL,
-  agent text NOT NULL DEFAULT 'AEAR Core',
+  agent text NOT NULL DEFAULT 'OpsAI Core',
   prompt text NOT NULL,
   sql_query text NOT NULL,
   execution_ms integer NOT NULL DEFAULT 0,

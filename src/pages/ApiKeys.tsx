@@ -426,7 +426,7 @@ export default function ApiKeys() {
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">API Keys</h1>
-          <p className="mt-1 text-sm text-slate-600">Use API keys to integrate AEAR into your own applications.</p>
+          <p className="mt-1 text-sm text-slate-600">Use API keys to integrate OpsAI into your own applications.</p>
         </div>
 
         <Button onClick={() => setCreateOpen(true)} disabled={!canManage} className="gap-2 bg-violet-600 hover:bg-violet-700">

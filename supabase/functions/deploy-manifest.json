@@ -55,6 +55,8 @@
     "knowledge-embed-worker-dispatch",
     "tenant-entitlements-check",
     "agent-regenerate",
-    "stripe-webhook"
+    "stripe-webhook",
+    "webhook-slack",
+    "generate-insight"
   ]
 }

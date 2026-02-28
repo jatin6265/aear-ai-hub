@@ -316,9 +316,9 @@ declare global {
 
 const SESSION_GROUP_ORDER: SessionGroup[] = ["Today", "Yesterday", "This Week", "Older"];
 const MAX_INPUT_HEIGHT = 112;
-const SQL_RESULT_MARKER_REGEX = /<!--AEAR_SQL_RESULT:([^>]+)-->/;
-const KNOWLEDGE_RESULT_MARKER_REGEX = /<!--AEAR_KNOWLEDGE_RESULT:([^>]+)-->/;
-const ACTION_PROPOSAL_MARKER_REGEX = /<!--AEAR_ACTION_PROPOSAL:([^>]+)-->/;
+const SQL_RESULT_MARKER_REGEX = /<!--OpsAI_SQL_RESULT:([^>]+)-->/;
+const KNOWLEDGE_RESULT_MARKER_REGEX = /<!--OpsAI_KNOWLEDGE_RESULT:([^>]+)-->/;
+const ACTION_PROPOSAL_MARKER_REGEX = /<!--OpsAI_ACTION_PROPOSAL:([^>]+)-->/;
 const TABLE_PAGE_SIZE = 10;
 const PII_COLUMN_REGEX = /(email|phone|mobile|ssn|tax|dob|birth|address|customer_name|full_name|name)$/i;
 const CHART_COLORS = ["#7c3aed", "#06b6d4", "#22c55e", "#f59e0b", "#f43f5e", "#3b82f6"];
@@ -590,8 +590,8 @@ function toSessionGroup(createdAt: string): SessionGroup {
 }
 
 function detectAgent(prompt: string) {
-  if (!prompt.trim()) return "AEAR Core";
-  return "AEAR Core";
+  if (!prompt.trim()) return "OpsAI Core";
+  return "OpsAI Core";
 }
 
 function detectRisk(prompt: string): RiskLevel | null {
@@ -692,15 +692,15 @@ function appendToolPayloads(
   let next = content;
   if (payloads.sqlResult) {
     const serialized = encodeURIComponent(JSON.stringify(payloads.sqlResult));
-    next = `${next}\n\n<!--AEAR_SQL_RESULT:${serialized}-->`;
+    next = `${next}\n\n<!--OpsAI_SQL_RESULT:${serialized}-->`;
   }
   if (payloads.knowledgeResult) {
     const serialized = encodeURIComponent(JSON.stringify(payloads.knowledgeResult));
-    next = `${next}\n\n<!--AEAR_KNOWLEDGE_RESULT:${serialized}-->`;
+    next = `${next}\n\n<!--OpsAI_KNOWLEDGE_RESULT:${serialized}-->`;
   }
   if (payloads.actionProposal) {
     const serialized = encodeURIComponent(JSON.stringify(payloads.actionProposal));
-    next = `${next}\n\n<!--AEAR_ACTION_PROPOSAL:${serialized}-->`;
+    next = `${next}\n\n<!--OpsAI_ACTION_PROPOSAL:${serialized}-->`;
   }
   return next;
 }
@@ -2177,7 +2177,7 @@ export default function Chat() {
       content: parsed.cleanContent,
       createdAt: row.created_at,
       riskLevel: normalizeRisk(row.risk_level),
-      agent: row.role === "assistant" ? row.tool_used ?? "AEAR Core" : null,
+      agent: row.role === "assistant" ? row.tool_used ?? "OpsAI Core" : null,
       queryResult: parsed.sqlResult,
       knowledgeResult: parsed.knowledgeResult,
       actionProposal: parsed.actionProposal,
@@ -2407,8 +2407,8 @@ export default function Chat() {
 
   useEffect(() => {
     const onFocusChatInput = () => inputRef.current?.focus();
-    window.addEventListener("aear:focus-chat-input", onFocusChatInput);
-    return () => window.removeEventListener("aear:focus-chat-input", onFocusChatInput);
+    window.addEventListener("opsai:focus-chat-input", onFocusChatInput);
+    return () => window.removeEventListener("opsai:focus-chat-input", onFocusChatInput);
   }, []);
 
   useEffect(() => {
@@ -2524,12 +2524,12 @@ export default function Chat() {
       new Set(
         messages
           .filter((message) => message.role === "assistant")
-          .map((message) => message.agent ?? "AEAR Core"),
+          .map((message) => message.agent ?? "OpsAI Core"),
       ),
     );
 
     return {
-      agents: activeAgents.length > 0 ? activeAgents : messages.length > 0 ? ["AEAR Core"] : [],
+      agents: activeAgents.length > 0 ? activeAgents : messages.length > 0 ? ["OpsAI Core"] : [],
       sources: fallbackSources,
       actionCount: messages.filter(
         (message) =>
@@ -2924,7 +2924,7 @@ export default function Chat() {
     setThinking(true);
     await new Promise((resolve) => window.setTimeout(resolve, 400));
 
-    let agent = "AEAR Core";
+    let agent = "OpsAI Core";
     let riskLevel: RiskLevel | null = "LOW";
     let queryResult: SqlResultPayload | null = null;
     let actionProposal: ActionProposalPayload | null = null;
@@ -3365,7 +3365,7 @@ export default function Chat() {
           ) : messages.length === 0 ? (
             <div className="flex h-full min-h-[260px] flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white text-center">
               <Sparkles className="h-7 w-7 text-violet-500" />
-              <h2 className="mt-3 text-lg font-semibold text-slate-900">Ask AEAR anything</h2>
+              <h2 className="mt-3 text-lg font-semibold text-slate-900">Ask OpsAI anything</h2>
               <p className="mt-1 max-w-md text-sm text-slate-500">
                 Query enterprise data, ask for insights, or request actions with built-in governance checks.
               </p>
@@ -3387,7 +3387,7 @@ export default function Chat() {
                           <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-violet-100 text-violet-700">
                             <Bot className="h-4 w-4" />
                           </span>
-                          <AgentBadge agent={message.agent ?? "AEAR Core"} />
+                          <AgentBadge agent={message.agent ?? "OpsAI Core"} />
                           {message.riskLevel && (
                             <Badge className={cn("border-0", riskBadgeClass(message.riskLevel))}>
                               <RiskIcon risk={message.riskLevel} />
@@ -3457,7 +3457,7 @@ export default function Chat() {
                   <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600 shadow-sm">
                     <div className="flex items-center gap-2">
                       <Loader2 className="h-4 w-4 animate-spin text-violet-600" />
-                      AEAR is thinking
+                      OpsAI is thinking
                       <span className="inline-flex items-center gap-1">
                         <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-violet-500 [animation-delay:0ms]" />
                         <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-violet-500 [animation-delay:180ms]" />
@@ -3486,7 +3486,7 @@ export default function Chat() {
               value={composerValue}
               onChange={(event) => setComposerValue(event.target.value)}
               onKeyDown={handleComposerKeyDown}
-              placeholder="Ask AEAR to query, analyze, or take governed action..."
+              placeholder="Ask OpsAI to query, analyze, or take governed action..."
               className="w-full resize-none border-0 bg-transparent text-base text-slate-900 outline-none placeholder:text-slate-500 md:text-sm"
               rows={1}
             />

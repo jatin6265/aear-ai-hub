@@ -649,7 +649,7 @@ BEGIN
   VALUES (
     v_tenant_id,
     auth.uid(),
-    'Test notification from AEAR',
+    'Test notification from OpsAI',
     'This is a sample in-app notification generated from Notification Preferences.',
     'test_notification',
     jsonb_build_object('source', 'settings.notifications', 'sentAt', now())

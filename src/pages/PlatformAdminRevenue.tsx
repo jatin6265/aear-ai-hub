@@ -412,7 +412,7 @@ export default function PlatformAdminRevenue() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `aear-platform-revenue-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.download = `opsai-platform-revenue-${new Date().toISOString().slice(0, 10)}.csv`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -445,7 +445,7 @@ export default function PlatformAdminRevenue() {
     report.document.write(`
       <html>
         <head>
-          <title>AEAR Platform Revenue Report</title>
+          <title>OpsAI Platform Revenue Report</title>
           <style>
             body { font-family: Arial, sans-serif; padding: 24px; color: #0f172a; }
             h1 { margin-bottom: 6px; }
@@ -460,7 +460,7 @@ export default function PlatformAdminRevenue() {
           </style>
         </head>
         <body>
-          <h1>AEAR Platform Revenue Dashboard</h1>
+          <h1>OpsAI Platform Revenue Dashboard</h1>
           <p class="muted">Generated ${new Date(payload.generatedAt).toLocaleString()}</p>
 
           <div class="kpis">

@@ -1,6 +1,6 @@
 # Environment Topology
 
-AEAR uses three Supabase environments:
+OpsAI uses three Supabase environments:
 
 - `dev`: active implementation and connector experiments
 - `staging`: pre-production validation and soak testing

@@ -1,4 +1,4 @@
-# AEAR Worker Runtime
+# OpsAI Worker Runtime
 
 Hybrid runtime companion for Supabase Edge Functions.
 

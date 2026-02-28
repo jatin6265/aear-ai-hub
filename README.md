@@ -1,4 +1,4 @@
-# AEAR AI Hub
+# OpsAI AI Hub
 
 Your Enterprise AI Operating Layer.
 

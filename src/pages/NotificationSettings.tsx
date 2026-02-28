@@ -542,7 +542,7 @@ export default function NotificationSettings() {
                           slackWorkspace: event.target.value,
                         }))
                       }
-                      placeholder="AEAR Workspace"
+                      placeholder="OpsAI Workspace"
                       disabled={!canManage}
                     />
                   </div>
@@ -567,7 +567,7 @@ export default function NotificationSettings() {
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <p className="text-sm font-medium text-slate-900">Webhook</p>
-                    <p className="text-xs text-slate-600">POST payload is signed with `X-AEAR-Signature` when secret is set.</p>
+                    <p className="text-xs text-slate-600">POST payload is signed with `X-OpsAI-Signature` when secret is set.</p>
                   </div>
                   <Switch
                     checked={channelDraft.webhookEnabled}
@@ -587,7 +587,7 @@ export default function NotificationSettings() {
                           webhookUrl: event.target.value,
                         }))
                       }
-                      placeholder="https://your-domain.com/hooks/aear"
+                      placeholder="https://your-domain.com/hooks/opsai"
                       disabled={!canManage}
                     />
                   </div>

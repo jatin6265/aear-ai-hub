@@ -181,7 +181,7 @@ const EMPTY_INVOICES: InvoiceHistoryPayload = {
   invoices: [],
   latestFailed: null,
   yearlyTotalSpentCents: 0,
-  downloadZipName: `aear-invoices-${new Date().getFullYear()}.zip`,
+  downloadZipName: `opsai-invoices-${new Date().getFullYear()}.zip`,
 };
 
 const COST_COLORS = ["#7c3aed", "#0ea5e9", "#f59e0b", "#ef4444"];
@@ -383,7 +383,7 @@ function normalizeInvoiceHistory(value: unknown): InvoiceHistoryPayload {
         }
       : null,
     yearlyTotalSpentCents: toNumber(raw.yearlyTotalSpentCents),
-    downloadZipName: String(raw.downloadZipName ?? `aear-invoices-${new Date().getFullYear()}.zip`),
+    downloadZipName: String(raw.downloadZipName ?? `opsai-invoices-${new Date().getFullYear()}.zip`),
   };
 }
 
@@ -636,7 +636,7 @@ export default function Billing() {
       }
 
       const blob = await zip.generateAsync({ type: "blob" });
-      triggerDownloadBlob(blob, invoiceHistory.downloadZipName || `aear-invoices-${invoiceHistory.year}.zip`);
+      triggerDownloadBlob(blob, invoiceHistory.downloadZipName || `opsai-invoices-${invoiceHistory.year}.zip`);
     } catch (error) {
       toast({
         title: "ZIP download failed",
@@ -819,7 +819,7 @@ export default function Billing() {
                 Retry Payment
               </Button>
               <Button variant="link" size="sm" asChild>
-                <a href="mailto:support@aear.ai">Contact Support</a>
+                <a href="mailto:support@opsai.ai">Contact Support</a>
               </Button>
             </div>
           </div>
@@ -979,7 +979,7 @@ export default function Billing() {
                 <div>
                   <p className="flex items-center gap-2 text-base font-semibold text-slate-900">
                     <FileText className="h-4 w-4 text-violet-600" />
-                    AEAR
+                    OpsAI
                   </p>
                   <p className="mt-2 text-sm text-slate-700">Invoice {invoiceDetail.invoiceNumber}</p>
                   <p className="text-xs text-slate-600">Invoice date: {formatIsoDate(invoiceDetail.invoiceDate)}</p>

@@ -107,6 +107,16 @@ function authzExpected(errorMessage, fallback) {
   );
 }
 
+function readErrorStatus(error) {
+  if (!error || typeof error !== "object") return null;
+  const context = error.context;
+  if (context && typeof context === "object" && typeof context.status === "number") {
+    return context.status;
+  }
+  if (typeof error.status === "number") return error.status;
+  return null;
+}
+
 function withTimeout(promise, timeoutMs, label) {
   return Promise.race([
     promise,
@@ -144,6 +154,8 @@ async function runSmokeChecks() {
   try {
     const signedIn = await app.auth.signInWithPassword({ email, password });
     if (signedIn.error) throw new Error(`Could not sign in smoke user: ${signedIn.error.message}`);
+    const accessToken = signedIn.data.session?.access_token || "";
+    if (!accessToken) throw new Error("Could not resolve smoke user access token after sign-in.");
 
     const provision = await app.rpc("provision_user_workspace", {
       p_company_name: "Smoke Co",
@@ -154,7 +166,13 @@ async function runSmokeChecks() {
 
     const invoke = async (fn, body = {}) => {
       const { data, error } = await withTimeout(
-        app.functions.invoke(fn, { body }),
+        app.functions.invoke(fn, {
+          body,
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            apikey: publishableKey,
+          },
+        }),
         DEFAULT_FUNCTION_TIMEOUT_MS,
         `Function '${fn}'`,
       );
@@ -179,7 +197,7 @@ async function runSmokeChecks() {
           type: "custom_rest",
           baseUrl: "https://example.com",
           authType: "none",
-          config: {},
+          config: { base_url: "https://example.com" },
         });
         rows.push(createConnection);
 
@@ -226,7 +244,9 @@ async function runSmokeChecks() {
       }
 
       const msg = row.error.message || "Unknown function error";
+      const status = readErrorStatus(row.error);
       const detail = `${typeof row.error.context === "object" ? JSON.stringify(row.error.context) : ""} ${row.errorBody || ""}`;
+      const detailPreview = detail.replace(/\s+/g, " ").trim().slice(0, 220);
 
       if (row.fn.startsWith("platform-admin") || row.fn === "admin-console") {
         if (authzExpected(msg, detail)) {
@@ -236,12 +256,12 @@ async function runSmokeChecks() {
       }
 
       if (row.fn === "send-team-invites") {
-        console.log(`WARN ${row.fn}: ${msg}`);
+        console.log(`WARN ${row.fn}: status=${status ?? "?"} ${msg}${detailPreview ? ` | ${detailPreview}` : ""}`);
         warnCount += 1;
         continue;
       }
 
-      console.log(`FAIL ${row.fn}: ${msg}`);
+      console.log(`FAIL ${row.fn}: status=${status ?? "?"} ${msg}${detailPreview ? ` | ${detailPreview}` : ""}`);
       hardFailCount += 1;
     }
 

@@ -13,7 +13,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 
-const REMEMBER_EMAIL_KEY = "aear.rememberEmail";
+const REMEMBER_EMAIL_KEY = "opsai.rememberEmail";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -146,7 +146,7 @@ export default function LoginPage() {
   };
 
   return (
-    <AuthSplitLayout title="Welcome back" subtitle="Sign in to manage your AEAR workspace.">
+    <AuthSplitLayout title="Welcome back" subtitle="Sign in to manage your OpsAI workspace.">
       {!mfaPending ? (
         <>
           <motion.form
@@ -263,7 +263,7 @@ export default function LoginPage() {
       )}
 
       <p className="mt-6 text-center text-sm text-slate-600">
-        New to AEAR?{" "}
+        New to OpsAI?{" "}
         <Link to="/auth/signup" className="font-semibold text-violet-700 hover:text-violet-800">
           Create account
         </Link>

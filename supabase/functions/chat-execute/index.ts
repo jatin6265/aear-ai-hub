@@ -186,10 +186,10 @@ async function detectAgent(prompt: string, supabase: AuthedSupabase, tenantId: s
     .order("updated_at", { ascending: false })
     .limit(40);
 
-  if (error || !data || data.length === 0) return "AEAR Core";
+  if (error || !data || data.length === 0) return "OpsAI Core";
   const candidates = data as AgentCandidate[];
   const promptTokens = tokenizePrompt(prompt);
-  if (promptTokens.length === 0) return candidates[0]?.name ?? "AEAR Core";
+  if (promptTokens.length === 0) return candidates[0]?.name ?? "OpsAI Core";
 
   let best: AgentCandidate | null = null;
   let bestScore = -1;
@@ -201,7 +201,7 @@ async function detectAgent(prompt: string, supabase: AuthedSupabase, tenantId: s
     }
   }
 
-  return best?.name ?? candidates[0]?.name ?? "AEAR Core";
+  return best?.name ?? candidates[0]?.name ?? "OpsAI Core";
 }
 
 function detectRisk(prompt: string): RiskLevel | null {

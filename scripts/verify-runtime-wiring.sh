@@ -48,13 +48,27 @@ while IFS= read -r fn; do
   [[ -n "$fn" ]] && FUNCTIONS+=("$fn")
 done < <(jq -r '.functions[]' "$MANIFEST_PATH")
 missing_sources=0
+missing_configs=0
 for fn in "${FUNCTIONS[@]}"; do
   if [[ ! -f "$ROOT_DIR/supabase/functions/$fn/index.ts" ]]; then
     echo "Missing function source: supabase/functions/$fn/index.ts"
     missing_sources=1
   fi
+  config_path="$ROOT_DIR/supabase/functions/$fn/config.toml"
+  if [[ ! -f "$config_path" ]]; then
+    echo "Missing function config: supabase/functions/$fn/config.toml"
+    missing_configs=1
+    continue
+  fi
+  if ! rg -q '^[[:space:]]*verify_jwt[[:space:]]*=[[:space:]]*false[[:space:]]*$' "$config_path"; then
+    echo "Invalid function config (verify_jwt must be false): supabase/functions/$fn/config.toml"
+    missing_configs=1
+  fi
 done
 if [[ $missing_sources -ne 0 ]]; then
+  exit 1
+fi
+if [[ $missing_configs -ne 0 ]]; then
   exit 1
 fi
 

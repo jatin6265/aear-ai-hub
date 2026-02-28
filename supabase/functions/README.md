@@ -37,7 +37,7 @@ These functions wrap the database RPC layer added in migration `20260221212000_e
 - `notification-settings`
   - `POST` body:
     - get payload: `{ "operation": "get_payload" }`
-    - save channels: `{ "operation": "save_channels", "channels": { "emailEnabled": true, "emailAddress": "ops@company.com", "slackEnabled": true, "slackWorkspace": "AEAR", "slackChannel": "#alerts", "webhookEnabled": true, "webhookUrl": "https://...", "webhookSecret": "optional-new-secret" } }`
+    - save channels: `{ "operation": "save_channels", "channels": { "emailEnabled": true, "emailAddress": "ops@company.com", "slackEnabled": true, "slackWorkspace": "OpsAI", "slackChannel": "#alerts", "webhookEnabled": true, "webhookUrl": "https://...", "webhookSecret": "optional-new-secret" } }`
     - save event matrix: `{ "operation": "save_types", "notificationTypes": [{ "eventKey": "approval_request_received", "email": true, "slack": true, "webhook": false }] }`
     - save digest: `{ "operation": "save_digest", "digest": { "dailyDigestEnabled": true, "dailyDigestTime": "09:00", "weeklyReportEnabled": true, "weeklyReportDay": 1, "timezone": "UTC" } }`
     - send test: `{ "operation": "send_test" }`
@@ -78,7 +78,7 @@ These functions wrap the database RPC layer added in migration `20260221212000_e
 - `widget-integration`
   - `POST` body:
     - get payload: `{ "operation": "get_payload" }`
-    - save config: `{ "operation": "save_config", "config": { "name": "AEAR Assistant Widget", "position": "bottom-right", "primaryColor": "#7c3aed", "buttonSize": "medium", "initialMessage": "How can I help you today?", "accessMode": "public|authenticated|jwt", "allowedOrigins": ["https://example.com"], "enabledAgentIds": ["<uuid>"], "features": { "executeActions": false, "viewReports": false, "requestApprovals": false } } }`
+    - save config: `{ "operation": "save_config", "config": { "name": "OpsAI Assistant Widget", "position": "bottom-right", "primaryColor": "#7c3aed", "buttonSize": "medium", "initialMessage": "How can I help you today?", "accessMode": "public|authenticated|jwt", "allowedOrigins": ["https://example.com"], "enabledAgentIds": ["<uuid>"], "features": { "executeActions": false, "viewReports": false, "requestApprovals": false } } }`
   - Calls RPCs: `get_widget_integration_payload`, `save_widget_integration_config`
 
 - `api-keys-management`
@@ -251,7 +251,7 @@ These functions wrap the database RPC layer added in migration `20260221212000_e
     - `POST /v1/documents`
     - `POST /v1/api-keys` (JWT only)
     - `GET /v1/usage`
-  - Auth: bearer `aear_*` API key or JWT
+  - Auth: bearer `opsai_*` API key or JWT
 
 - `webhook-delivery-worker-callback`
   - `POST` body (worker token required): `{ "deliveryId": "<uuid>", "status": "running|success|error|dead_letter|cancelled", "responseStatus": 200, "responseBody": "...", "error": "..." }`

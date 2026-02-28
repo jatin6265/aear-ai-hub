@@ -214,7 +214,7 @@ BEGIN
   WITH daily_agent AS (
     SELECT
       to_char(date_trunc('day', csr.created_at), 'YYYY-MM-DD') AS day,
-      COALESCE(NULLIF(trim(csr.agent), ''), 'AEAR Core') AS agent,
+      COALESCE(NULLIF(trim(csr.agent), ''), 'OpsAI Core') AS agent,
       COUNT(*)::integer AS queries
     FROM public.chat_sql_runs csr
     WHERE csr.tenant_id = v_tenant_id
@@ -237,7 +237,7 @@ BEGIN
   FROM daily_agent da;
 
   WITH agents AS (
-    SELECT DISTINCT COALESCE(NULLIF(trim(csr.agent), ''), 'AEAR Core') AS agent
+    SELECT DISTINCT COALESCE(NULLIF(trim(csr.agent), ''), 'OpsAI Core') AS agent
     FROM public.chat_sql_runs csr
     WHERE csr.tenant_id = v_tenant_id
       AND csr.created_at >= v_from_ts
@@ -412,7 +412,7 @@ BEGIN
   -- Agent performance table.
   WITH base AS (
     SELECT
-      COALESCE(NULLIF(trim(csr.agent), ''), 'AEAR Core') AS agent,
+      COALESCE(NULLIF(trim(csr.agent), ''), 'OpsAI Core') AS agent,
       csr.prompt,
       csr.success,
       csr.execution_ms,

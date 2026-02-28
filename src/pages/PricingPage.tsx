@@ -285,7 +285,7 @@ export default function PricingPage() {
 
                   {plan.code === "enterprise" ? (
                     <Button variant="outline" className="mt-6 border-slate-300" asChild>
-                      <a href="mailto:sales@aear.ai">Contact Sales</a>
+                      <a href="mailto:sales@opsai.ai">Contact Sales</a>
                     </Button>
                   ) : (
                     <Button className="mt-6 bg-violet-600 hover:bg-violet-700" asChild>

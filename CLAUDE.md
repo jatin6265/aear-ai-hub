@@ -29,7 +29,7 @@ scripts/setup-e2e.sh --project-ref <ref>  # With deploy
 
 ## Architecture
 
-AEAR is a multi-tenant enterprise AI operating layer. It has three runtime components that must all run:
+OpsAI is a multi-tenant enterprise AI operating layer. It has three runtime components that must all run:
 
 1. **Frontend** (`src/`) – Vite + React + TypeScript SPA
 2. **Supabase backend** – Postgres (with RLS + RPCs), Auth, and Edge Functions (Deno)
