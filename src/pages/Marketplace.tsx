@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { formatEdgeFunctionError, sanitizeConnectionErrorMessage } from "@/lib/edge-function-error";
 import { invokeEdge } from "@/lib/edge-invoke";
+import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 
 type Tier = "free" | "pro_plus" | "enterprise";
@@ -240,22 +241,46 @@ export default function Marketplace() {
   const [actionCode, setActionCode] = useState<string | null>(null);
   const [payload, setPayload] = useState<MarketplacePayload>(EMPTY_PAYLOAD);
 
+  const loadPayloadDirect = useCallback(
+    async (params?: { search?: string; category?: string; installedOnly?: boolean }) => {
+      const { data, error } = await supabase.rpc("get_integration_marketplace_payload", {
+        p_search: params?.search ?? search ?? null,
+        p_category: params?.category ?? activeCategory,
+        p_installed_only: params?.installedOnly ?? (tab === "installed"),
+      });
+      if (error) throw error;
+      return normalizePayload(data as unknown);
+    },
+    [activeCategory, search, tab],
+  );
+
   const loadPayload = useCallback(
     async (params?: { search?: string; category?: string; installedOnly?: boolean }) => {
       setLoading(true);
       try {
-        const { data, error } = await invokeEdge("marketplace-directory", {
-          body: {
-            operation: "get_payload",
-            search: params?.search ?? search,
-            category: params?.category ?? activeCategory,
-            installedOnly: params?.installedOnly ?? (tab === "installed"),
-          },
-        });
+        let resolved: MarketplacePayload | null = null;
+        try {
+          const { data, error } = await invokeEdge("marketplace-directory", {
+            body: {
+              operation: "get_payload",
+              search: params?.search ?? search,
+              category: params?.category ?? activeCategory,
+              installedOnly: params?.installedOnly ?? (tab === "installed"),
+            },
+          });
+          if (!error) {
+            const response = asRecord(data);
+            resolved = normalizePayload(response?.payload);
+          }
+        } catch {
+          // Edge function failed — fall through to direct RPC
+        }
 
-        if (error) throw error;
-        const response = asRecord(data);
-        setPayload(normalizePayload(response?.payload));
+        if (!resolved) {
+          resolved = await loadPayloadDirect(params);
+        }
+
+        setPayload(resolved);
       } catch (error) {
         const description = await normalizeInvokeError(error, "marketplace-directory");
         toast({
@@ -267,7 +292,7 @@ export default function Marketplace() {
         setLoading(false);
       }
     },
-    [activeCategory, search, tab, toast],
+    [activeCategory, loadPayloadDirect, search, tab, toast],
   );
 
   useEffect(() => {
@@ -282,19 +307,37 @@ export default function Marketplace() {
     async (operation: "install" | "configure" | "uninstall", integration: IntegrationItem) => {
       setActionCode(`${operation}:${integration.code}`);
       try {
-        const { data, error } = await invokeEdge("marketplace-directory", {
-          body: {
-            operation,
-            integrationCode: integration.code,
-            search,
-            category: activeCategory,
-            installedOnly: tab === "installed",
-          },
-        });
+        let edgeSucceeded = false;
+        try {
+          const { data, error } = await invokeEdge("marketplace-directory", {
+            body: {
+              operation,
+              integrationCode: integration.code,
+              search,
+              category: activeCategory,
+              installedOnly: tab === "installed",
+            },
+          });
+          if (!error) {
+            const response = asRecord(data);
+            setPayload(normalizePayload(response?.payload));
+            edgeSucceeded = true;
+          }
+        } catch {
+          // Edge function failed — fall through to direct RPC
+        }
 
-        if (error) throw error;
-        const response = asRecord(data);
-        setPayload(normalizePayload(response?.payload));
+        if (!edgeSucceeded) {
+          // Fallback: use set_integration_install_state RPC directly
+          const { error: rpcError } = await supabase.rpc("set_integration_install_state", {
+            p_integration_code: integration.code,
+            p_operation: operation,
+          });
+          if (rpcError) throw rpcError;
+          // Reload the payload after state change
+          const reloaded = await loadPayloadDirect();
+          setPayload(reloaded);
+        }
 
         if (operation === "install") {
           toast({
@@ -329,7 +372,7 @@ export default function Marketplace() {
         setActionCode(null);
       }
     },
-    [activeCategory, navigate, search, tab, toast],
+    [activeCategory, loadPayloadDirect, navigate, search, tab, toast],
   );
 
   const categories = useMemo(() => {

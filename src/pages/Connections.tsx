@@ -1055,7 +1055,7 @@ export default function Connections() {
 
   const handleDelete = async (connectionId: string, connectionName: string) => {
     if (!tenantId) return;
-    if (!window.confirm(`Delete ${connectionName}? This action cannot be undone.`)) return;
+    if (!window.confirm(`Delete ${connectionName}? This will also delete all knowledge documents, embeddings, and context events associated with this connection. This action cannot be undone.`)) return;
 
     setDeletingId(connectionId);
     try {
