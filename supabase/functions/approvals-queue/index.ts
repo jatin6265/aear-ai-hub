@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { corsHeaders, errorResponse, jsonResponse } from "../_shared/http.ts";
 import { getAuthedClient } from "../_shared/auth.ts";
+import { getServiceClient } from "../_shared/service.ts";
 
 type Operation = "get_payload" | "decide" | "get_review_detail" | "review_decide";
 
@@ -133,6 +134,20 @@ serve(async (req) => {
       });
 
       if (error) return errorResponse(400, "Failed to submit approval review decision", error.message);
+
+      // CRITICAL: If the approval quorum is now reached, re-enqueue any agent runs
+      // that were paused waiting for this approval (status='waiting_approval').
+      // The governance wrapper will consume the execution token on re-run so the
+      // high-risk tool is not blocked by a second approval request.
+      const resultData = data as Record<string, unknown> | null;
+      if (resultData?.status === "approved") {
+        const svc = getServiceClient();
+        if (svc.ok) {
+          await svc.supabase.rpc("resume_approved_agent_runs", {
+            p_approval_request_id: approvalId,
+          }).then(() => null).catch(() => null); // non-fatal: log but don't block response
+        }
+      }
 
       const payload = await loadPayload(auth.supabase, filters);
       const reviewRows = await auth.supabase.rpc("get_approval_review_payload", {

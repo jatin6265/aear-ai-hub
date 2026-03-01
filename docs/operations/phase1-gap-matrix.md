@@ -41,6 +41,9 @@ This matrix tracks OpsAI Phase 1 deliverables from the Build Plan against the ca
 | check-plan-limits | Adapter added | `tenant-entitlements-check` / `tenant_entitlements_check` RPC |
 | oauth-callback | Implemented | `oauth-callback` |
 | webhook-slack | Implemented | `webhook-slack` |
+| webhook-whatsapp | Added | `webhook-whatsapp` |
+| webhook-telegram | Added | `webhook-telegram` |
+| webhook-teams | Added | `webhook-teams` |
 
 ## C1-C18 Worker Files
 
@@ -64,6 +67,17 @@ This matrix tracks OpsAI Phase 1 deliverables from the Build Plan against the ca
 | `pipeline/agentBuilder.ts` | Implemented | `worker/src/pipeline/agentBuilder.ts` |
 | `pipeline/queryRouter.ts` | Implemented | `worker/src/pipeline/queryRouter.ts` |
 | `pipeline/predictiveEngine.ts` | Implemented | `worker/src/pipeline/predictiveEngine.ts` |
+
+### OpenClaw Edition Service Layer
+
+| Architecture v2.0 Layer | Status | Canonical File |
+|---|---|---|
+| `services/agent-core` | Implemented (OpenClaw-first, compat fallback) | `worker/src/services/agent-core/*` |
+| `services/governance/wrapper` | Implemented | `worker/src/services/governance/wrapper.ts` |
+| `services/memory/builder` | Implemented | `worker/src/services/memory/builder.ts` |
+| `services/integration/registry` | Implemented | `worker/src/services/integration/registry.ts` |
+| `services/router/multi-agent` | Implemented | `worker/src/services/router/multiAgent.ts` |
+| Worker runtime cutover | Implemented | `worker/src/runtime/agentLoop.ts` now delegates to `OpsAIAgent` |
 
 ## P0-P3 Frontend Routes
 
@@ -98,3 +112,4 @@ This matrix tracks OpsAI Phase 1 deliverables from the Build Plan against the ca
 | Runtime teardown on uninstall | Implemented | `teardown_tenant_integration_runtime` RPC |
 | Agent runtime with tool call processing | Implemented (Phase 1) | `agentLoop` now loads MCP tools, executes governed calls, then finalizes LLM response |
 | Structured-output blueprint generation | Implemented | `agentBuilder` uses strict JSON schema response format and ID filtering |
+| OpenClaw execution substrate | Implemented (Phase-1 callback bridge) | `openclaw-rpc` runs iterative planning with governed tenant tool callbacks and strict fallback control via `OPENCLAW_STRICT` |

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { 
@@ -50,6 +51,7 @@ type Tool = {
 export default function Tools() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const navigate = useNavigate();
   const [tools, setTools] = useState<Tool[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -81,7 +83,47 @@ export default function Tools() {
     }
   }
 
-  const filteredTools = tools.filter(t => 
+  async function handleToggleActive(tool: Tool) {
+    try {
+      const { error } = await supabase
+        .from("tool_registry")
+        .update({ is_active: !tool.is_active })
+        .eq("id", tool.id);
+      if (error) throw error;
+      setTools((prev) => prev.map((t) => t.id === tool.id ? { ...t, is_active: !t.is_active } : t));
+      toast({ title: `Tool ${!tool.is_active ? "enabled" : "disabled"}` });
+    } catch (error) {
+      toast({
+        title: "Could not update tool",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
+      });
+    }
+  }
+
+  async function handleDeleteTool(tool: Tool) {
+    try {
+      const { error } = await supabase
+        .from("tool_registry")
+        .delete()
+        .eq("id", tool.id);
+      if (error) throw error;
+      setTools((prev) => prev.filter((t) => t.id !== tool.id));
+      toast({ title: `${tool.display_name} removed from registry` });
+    } catch (error) {
+      toast({
+        title: "Could not delete tool",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
+      });
+    }
+  }
+
+  function handleViewLogs(tool: Tool) {
+    navigate(`/dashboard/audit-logs?search=${encodeURIComponent(tool.code)}`);
+  }
+
+  const filteredTools = tools.filter(t =>
     t.display_name.toLowerCase().includes(search.toLowerCase()) ||
     t.code.toLowerCase().includes(search.toLowerCase()) ||
     t.category.toLowerCase().includes(search.toLowerCase())
@@ -104,7 +146,10 @@ export default function Tools() {
           <h1 className="text-2xl font-bold text-slate-900">Tool Registry</h1>
           <p className="text-slate-500 text-sm">Manage AI capabilities and governance rules for automated actions.</p>
         </div>
-        <Button className="gradient-cta text-white border-0 shadow-sm">
+        <Button
+          className="gradient-cta text-white border-0 shadow-sm"
+          onClick={() => navigate("/dashboard/marketplace")}
+        >
           <Plus className="w-4 h-4 mr-2" />
           Register Custom Tool
         </Button>
@@ -187,13 +232,23 @@ export default function Tools() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end" className="w-40">
-                        <DropdownMenuItem className="text-slate-600">
-                          <Edit3 className="w-4 h-4 mr-2" /> Edit
+                        <DropdownMenuItem
+                          className="text-slate-600"
+                          onClick={() => void handleToggleActive(tool)}
+                        >
+                          <Edit3 className="w-4 h-4 mr-2" />
+                          {tool.is_active ? "Disable" : "Enable"}
                         </DropdownMenuItem>
-                        <DropdownMenuItem className="text-slate-600">
+                        <DropdownMenuItem
+                          className="text-slate-600"
+                          onClick={() => handleViewLogs(tool)}
+                        >
                           <ExternalLink className="w-4 h-4 mr-2" /> View Logs
                         </DropdownMenuItem>
-                        <DropdownMenuItem className="text-red-600 focus:text-red-600 focus:bg-red-50">
+                        <DropdownMenuItem
+                          className="text-red-600 focus:text-red-600 focus:bg-red-50"
+                          onClick={() => void handleDeleteTool(tool)}
+                        >
                           <Trash2 className="w-4 h-4 mr-2" /> Delete
                         </DropdownMenuItem>
                       </DropdownMenuContent>

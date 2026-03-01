@@ -312,6 +312,24 @@ These functions wrap the database RPC layer added in migration `20260221212000_e
   - `POST` body: Stripe webhook payload
   - Verifies signature and upserts `billing_events`, `subscriptions`, and `invoice_snapshots`
 
+- `webhook-slack`
+  - `POST` body: Slack Events API payload
+  - Verifies Slack signature and queues message events to `ingestion_queue` + `context_events`
+
+- `webhook-whatsapp`
+  - `GET` for Meta verification (`hub.challenge`)
+  - `POST` body: WhatsApp Cloud API webhook payload
+  - Verifies `x-hub-signature-256` when `WHATSAPP_APP_SECRET` is set, then queues events for ingestion
+
+- `webhook-telegram`
+  - `POST` body: Telegram update payload
+  - Verifies `x-telegram-bot-api-secret-token` when `TELEGRAM_WEBHOOK_SECRET_TOKEN` is set, then queues events for ingestion
+
+- `webhook-teams`
+  - `GET ?validationToken=...` returns plaintext token for Graph subscription validation
+  - `POST` body: Microsoft Graph notifications payload
+  - Validates optional `TEAMS_WEBHOOK_CLIENT_STATE`, then queues events for ingestion
+
 ## Deploy
 
 ```bash
@@ -326,6 +344,7 @@ Use `scripts/deploy-backend.sh <project-ref>` to deploy all functions from `depl
 - Gateway JWT verification is disabled (`--no-verify-jwt`) to avoid auth failures with asymmetric user JWTs; auth is validated in-function.
 - Exception: `public-pricing` is intentionally public for unauthenticated pricing page access.
 - Exception: `stripe-webhook` and `connector-sync-worker-callback` use signature/token authentication, not end-user JWTs.
+- Exception: `webhook-slack`, `webhook-whatsapp`, `webhook-telegram`, and `webhook-teams` use signature/token validation, not end-user JWTs.
 - CORS is open for development by default (`*`). Restrict in production if needed.
 - `send-team-invites` and `team-management` now deliver invitation emails through Resend.
   Required secrets:

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   AlertTriangle,
@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   Loader2,
   Pencil,
+  RefreshCw,
   Save,
   Trash2,
 } from "lucide-react";
@@ -209,6 +210,7 @@ export default function AgentDetail() {
   const { toast } = useToast();
 
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [updating, setUpdating] = useState(false);
   const [detail, setDetail] = useState<AgentDetailPayload | null>(null);
   const [editingName, setEditingName] = useState(false);
@@ -216,6 +218,7 @@ export default function AgentDetail() {
   const [raciDrafts, setRaciDrafts] = useState<Record<string, string>>({});
   const [savingRaciId, setSavingRaciId] = useState<string | null>(null);
   const [togglingToolId, setTogglingToolId] = useState<string | null>(null);
+  const loadingRef = useRef(false);
 
   const runOperation = useCallback(
     async (operation: Operation, extraBody: Record<string, unknown> = {}, silent = false) => {
@@ -246,9 +249,52 @@ export default function AgentDetail() {
     [id],
   );
 
+  // Fallback: load basic agent info directly from the DB when edge fn is unavailable
+  const loadFromDb = useCallback(async (): Promise<boolean> => {
+    if (!id) return false;
+    const { data, error } = await supabase
+      .from("agents")
+      .select("id, name, slug, domain, description, status, avatar_emoji, source_connection_id, updated_at")
+      .eq("id", id)
+      .maybeSingle();
+    if (error || !data) return false;
+    setDetail({
+      agent: {
+        id: data.id as string,
+        name: (data.name as string) ?? "Unnamed Agent",
+        slug: (data.slug as string) ?? "",
+        domain: (data.domain as string) ?? "general",
+        description: (data.description as string | null) ?? null,
+        status: (data.status as string) ?? "inactive",
+        avatarEmoji: (data.avatar_emoji as string | null) ?? null,
+        sourceConnectionId: (data.source_connection_id as string | null) ?? null,
+        sourceConnectionName: null,
+        updatedAt: (data.updated_at as string) ?? new Date().toISOString(),
+      },
+      tools: [],
+      memory: {
+        session: { activeSessions: 0 },
+        user: { entriesCount: 0, lastUpdated: null },
+        organization: { entriesCount: 0, lastUpdated: null, vectorCount: 0, storageBytes: 0 },
+        preview: [],
+      },
+      performance: {
+        queriesPerDay: [],
+        successFailure: { success: 0, failure: 0 },
+        avgResponseTrend: [],
+        mostUsedTools: [],
+      },
+      raciBindings: [],
+      recentExecutions: [],
+    });
+    return true;
+  }, [id]);
+
   const load = useCallback(async () => {
-    if (!id) return;
+    if (!id || loadingRef.current) return;
+    loadingRef.current = true;
     setLoading(true);
+    setLoadError(null);
     try {
       const payload = await runOperation("get", {}, true);
       if (payload) {
@@ -259,16 +305,27 @@ export default function AgentDetail() {
           }, {}),
         );
       }
-    } catch (error) {
-      toast({
-        title: "Could not load agent detail",
-        description: normalizeError(error),
-        variant: "destructive",
-      });
+    } catch {
+      // Edge function unavailable — try direct DB fallback
+      const loaded = await loadFromDb();
+      if (loaded) {
+        toast({
+          title: "Live analytics unavailable",
+          description: "Showing basic agent info from the database. Deploy edge functions to enable full detail.",
+        });
+      } else {
+        setLoadError("Could not load agent details. The backend service may not be available.");
+        toast({
+          title: "Could not load agent detail",
+          description: "Both the edge function and the database fallback failed.",
+          variant: "destructive",
+        });
+      }
     } finally {
       setLoading(false);
+      loadingRef.current = false;
     }
-  }, [id, runOperation, toast]);
+  }, [id, runOperation, toast, loadFromDb]);
 
   useEffect(() => {
     void load();
@@ -407,12 +464,41 @@ export default function AgentDetail() {
     }
   };
 
-  if (loading || !detail) {
+  if (loading) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-10 w-64" />
         <Skeleton className="h-36 w-full" />
         <Skeleton className="h-96 w-full" />
+      </div>
+    );
+  }
+
+  if (!detail) {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center gap-2 text-sm text-slate-500">
+          <Button type="button" variant="ghost" size="sm" onClick={() => navigate("/dashboard/agents")}>
+            <ChevronLeft className="h-4 w-4" />
+            Back to Agents
+          </Button>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white p-10 shadow-sm text-center">
+          <AlertTriangle className="mx-auto h-10 w-10 text-amber-500" />
+          <h2 className="mt-4 text-lg font-semibold text-slate-900">Agent details unavailable</h2>
+          <p className="mt-2 text-sm text-slate-600 max-w-sm mx-auto">
+            {loadError ?? "The agent detail service is not reachable. This usually means the backend edge function hasn't been deployed yet."}
+          </p>
+          <div className="mt-6 flex items-center justify-center gap-3">
+            <Button onClick={() => void load()}>
+              <RefreshCw className="mr-2 h-4 w-4" />
+              Retry
+            </Button>
+            <Button variant="outline" onClick={() => navigate("/dashboard/agents")}>
+              Back to Agents
+            </Button>
+          </div>
+        </div>
       </div>
     );
   }

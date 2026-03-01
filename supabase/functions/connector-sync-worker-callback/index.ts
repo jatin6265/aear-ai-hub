@@ -18,6 +18,7 @@ type SyncEntity = {
     sensitivity?: string;
     sampleValue?: string;
   }>;
+  sampleRows?: Array<Record<string, unknown>>;
 };
 
 type SyncRelationship = {
@@ -122,6 +123,7 @@ function buildEntityKnowledgeText(connectionName: string, entity: SyncEntity) {
   const riskLevel = String(entity.riskLevel ?? "low");
   const description = String(entity.description ?? `Discovered entity ${name}`);
   const columns = Array.isArray(entity.columns) ? entity.columns : [];
+  const sampleRows = Array.isArray(entity.sampleRows) ? entity.sampleRows.slice(0, 20) : [];
 
   const columnSummary = columns
     .slice(0, 20)
@@ -149,6 +151,17 @@ function buildEntityKnowledgeText(connectionName: string, entity: SyncEntity) {
 
   if (columnSummary.length > 0) {
     sections.push("", "Columns:", ...columnSummary);
+  }
+
+  if (sampleRows.length > 0) {
+    sections.push("", "Sample rows:");
+    for (const row of sampleRows) {
+      const pairs = Object.entries(row)
+        .slice(0, 12)
+        .map(([key, value]) => `${key}=${String(value ?? "").slice(0, 120)}`);
+      if (pairs.length === 0) continue;
+      sections.push(`- ${pairs.join(" | ")}`);
+    }
   }
 
   return sections.join("\n");
@@ -371,6 +384,7 @@ serve(async (req) => {
     for (const entity of entities) {
       const name = String(entity.name ?? "").trim();
       if (!name) continue;
+      const sampleRows = Array.isArray(entity.sampleRows) ? entity.sampleRows.slice(0, 20) : [];
 
       const { data: insertedEntity, error: entityError } = await service.supabase
         .from("connection_entities")
@@ -385,7 +399,11 @@ serve(async (req) => {
           sensitivity: entity.sensitivity ?? "normal",
           description: entity.description ?? null,
           embedding_coverage: Number(entity.embeddingCoverage ?? 0),
-          metadata: {},
+          metadata: {
+            sample_rows: sampleRows,
+            source_kind: normalizeEntitySourceKind(entity.sourceKind),
+            sync_job_id: job.id,
+          },
         })
         .select("id")
         .single();

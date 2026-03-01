@@ -69,6 +69,27 @@ if [[ "$WORKER_RUNTIME_MODE" != "polling" && "$WORKER_RUNTIME_MODE" != "queue" ]
   exit 1
 fi
 
+AGENT_RUNTIME_ENGINE="$(echo "${AGENT_RUNTIME_ENGINE:-openclaw}" | tr '[:upper:]' '[:lower:]')"
+if [[ "$AGENT_RUNTIME_ENGINE" != "openclaw" && "$AGENT_RUNTIME_ENGINE" != "openai" ]]; then
+  echo "Invalid AGENT_RUNTIME_ENGINE: $AGENT_RUNTIME_ENGINE (expected openclaw|openai)"
+  exit 1
+fi
+
+OPENCLAW_STRICT_MODE="$(echo "${OPENCLAW_STRICT:-false}" | tr '[:upper:]' '[:lower:]')"
+OPENCLAW_RPC_COMMAND_VALUE="${OPENCLAW_RPC_COMMAND:-openclaw agent --mode rpc --json}"
+OPENCLAW_RPC_BIN="$(echo "$OPENCLAW_RPC_COMMAND_VALUE" | awk '{print $1}')"
+
+if [[ "$AGENT_RUNTIME_ENGINE" == "openclaw" ]]; then
+  if ! command -v "$OPENCLAW_RPC_BIN" >/dev/null 2>&1; then
+    echo "OpenClaw runtime command not found: $OPENCLAW_RPC_BIN"
+    if [[ "$OPENCLAW_STRICT_MODE" == "true" || $STRICT -eq 1 ]]; then
+      echo "Strict mode enabled: OpenClaw runtime binary is required."
+      exit 1
+    fi
+    echo "Warning: worker will fallback to OpenAI engine when OpenClaw is unavailable."
+  fi
+fi
+
 if [[ "$WORKER_RUNTIME_MODE" == "queue" && -z "${REDIS_URL:-}" ]]; then
   echo "Missing REDIS_URL for WORKER_RUNTIME_MODE=queue"
   exit 1

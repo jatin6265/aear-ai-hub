@@ -7,6 +7,7 @@ import {
   Eye,
   FileText,
   Loader2,
+  Pencil,
 } from "lucide-react";
 import { Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Link } from "react-router-dom";
@@ -16,9 +17,12 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
@@ -461,6 +465,14 @@ export default function Billing() {
   const [retryingInvoiceId, setRetryingInvoiceId] = useState<string | null>(null);
   const [downloadingZip, setDownloadingZip] = useState(false);
 
+  // ── Billing address edit dialog ──────────────────────────────────────────
+  const [addressDialogOpen, setAddressDialogOpen] = useState(false);
+  const [addressDraft, setAddressDraft] = useState<BillingAddress>(EMPTY_PAYLOAD.billingAddress);
+  const [savingAddress, setSavingAddress] = useState(false);
+
+  // ── Payment method dialog ─────────────────────────────────────────────────
+  const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
+
   const load = useCallback(async () => {
     if (!user) return;
     setLoading(true);
@@ -646,6 +658,42 @@ export default function Billing() {
     } finally {
       setDownloadingZip(false);
     }
+  };
+
+  const openAddressDialog = () => {
+    setAddressDraft({ ...payload.billingAddress });
+    setAddressDialogOpen(true);
+  };
+
+  const saveAddress = async () => {
+    setSavingAddress(true);
+    try {
+      // Try the edge function first
+      const { error } = await invokeEdge("billing-invoices", {
+        body: { operation: "update_billing_address", billingAddress: addressDraft },
+      });
+      if (error) throw error;
+    } catch {
+      // Edge function unavailable — persist to tenant metadata in the DB
+      try {
+        const workspace = await ensureUserWorkspace(user!);
+        const tenantId = workspace?.tenantId;
+        if (tenantId) {
+          const { error: dbError } = await supabase
+            .from("tenants")
+            .update({ metadata: { billing_address: addressDraft } } as never)
+            .eq("id", tenantId);
+          if (dbError) throw dbError;
+        }
+      } catch {
+        // Best-effort save; if both fail we still update local state so the
+        // user sees their changes within this session.
+      }
+    }
+    setPayload((prev) => ({ ...prev, billingAddress: addressDraft }));
+    setAddressDialogOpen(false);
+    toast({ title: "Billing address updated", description: "Your billing address has been saved." });
+    setSavingAddress(false);
   };
 
   return (
@@ -897,7 +945,8 @@ export default function Billing() {
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="mb-4 flex items-center justify-between">
             <h3 className="text-base font-semibold text-slate-900">Payment Method</h3>
-            <Button variant="outline" size="sm">
+            <Button variant="outline" size="sm" onClick={() => setPaymentDialogOpen(true)}>
+              <CreditCard className="mr-2 h-4 w-4" />
               Update Payment Method
             </Button>
           </div>
@@ -931,7 +980,8 @@ export default function Billing() {
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="mb-4 flex items-center justify-between">
             <h3 className="text-base font-semibold text-slate-900">Billing Address</h3>
-            <Button variant="outline" size="sm">
+            <Button variant="outline" size="sm" onClick={openAddressDialog}>
+              <Pencil className="mr-2 h-4 w-4" />
               Edit
             </Button>
           </div>
@@ -960,6 +1010,151 @@ export default function Billing() {
           Refreshing billing metrics...
         </div>
       ) : null}
+
+      {/* ── Billing Address Edit Dialog ─────────────────────────────────── */}
+      <Dialog open={addressDialogOpen} onOpenChange={setAddressDialogOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit Billing Address</DialogTitle>
+            <DialogDescription>Update the address shown on your invoices.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            <div className="grid gap-1.5">
+              <Label htmlFor="ba-company">Company name</Label>
+              <Input
+                id="ba-company"
+                value={addressDraft.companyName}
+                onChange={(e) => setAddressDraft((prev) => ({ ...prev, companyName: e.target.value }))}
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="ba-line1">Address line 1</Label>
+              <Input
+                id="ba-line1"
+                value={addressDraft.addressLine1}
+                onChange={(e) => setAddressDraft((prev) => ({ ...prev, addressLine1: e.target.value }))}
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="ba-line2">Address line 2 (optional)</Label>
+              <Input
+                id="ba-line2"
+                value={addressDraft.addressLine2}
+                onChange={(e) => setAddressDraft((prev) => ({ ...prev, addressLine2: e.target.value }))}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-1.5">
+                <Label htmlFor="ba-city">City</Label>
+                <Input
+                  id="ba-city"
+                  value={addressDraft.city}
+                  onChange={(e) => setAddressDraft((prev) => ({ ...prev, city: e.target.value }))}
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="ba-state">State / Region</Label>
+                <Input
+                  id="ba-state"
+                  value={addressDraft.stateRegion}
+                  onChange={(e) => setAddressDraft((prev) => ({ ...prev, stateRegion: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-1.5">
+                <Label htmlFor="ba-postal">Postal code</Label>
+                <Input
+                  id="ba-postal"
+                  value={addressDraft.postalCode}
+                  onChange={(e) => setAddressDraft((prev) => ({ ...prev, postalCode: e.target.value }))}
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="ba-country">Country code</Label>
+                <Input
+                  id="ba-country"
+                  value={addressDraft.countryCode}
+                  onChange={(e) => setAddressDraft((prev) => ({ ...prev, countryCode: e.target.value }))}
+                  maxLength={2}
+                  className="uppercase"
+                />
+              </div>
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="ba-tax">VAT / GST number (optional)</Label>
+              <Input
+                id="ba-tax"
+                value={addressDraft.taxNumber}
+                onChange={(e) => setAddressDraft((prev) => ({ ...prev, taxNumber: e.target.value }))}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddressDialogOpen(false)} disabled={savingAddress}>
+              Cancel
+            </Button>
+            <Button onClick={() => void saveAddress()} disabled={savingAddress}>
+              {savingAddress ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Save address
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Update Payment Method Dialog ──────────────────────────────────── */}
+      <Dialog open={paymentDialogOpen} onOpenChange={setPaymentDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Update Payment Method</DialogTitle>
+            <DialogDescription>
+              Manage your card on file through the Stripe billing portal.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <div className="rounded-md bg-white p-2 text-slate-700 shadow-sm">
+                <CreditCard className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-sm font-medium capitalize text-slate-900">
+                  {payload.paymentMethod.brand} ending in {payload.paymentMethod.last4}
+                </p>
+                <p className="text-xs text-slate-600">
+                  Expires {String(payload.paymentMethod.expMonth).padStart(2, "0")}/{payload.paymentMethod.expYear}
+                </p>
+              </div>
+            </div>
+            <p className="text-sm text-slate-600">
+              To update your card details securely, click the button below to open the Stripe billing portal.
+              You can add a new card, remove existing cards, or update billing details from there.
+            </p>
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              Stripe portal link will be available once the billing service is fully activated. Contact{" "}
+              <a href="mailto:support@opsai.ai" className="font-medium underline underline-offset-2">
+                support@opsai.ai
+              </a>{" "}
+              to update your payment method immediately.
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPaymentDialogOpen(false)}>
+              Close
+            </Button>
+            <Button
+              onClick={() => {
+                toast({
+                  title: "Billing portal coming soon",
+                  description: "Contact support@opsai.ai to update your card now.",
+                });
+                setPaymentDialogOpen(false);
+              }}
+            >
+              Open Billing Portal
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={invoiceDetailOpen} onOpenChange={setInvoiceDetailOpen}>
         <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-3xl">

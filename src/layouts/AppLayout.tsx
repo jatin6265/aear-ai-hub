@@ -317,6 +317,7 @@ export default function AppLayout() {
     const loadCounts = async () => {
       try {
         const workspace = await ensureUserWorkspace(user);
+        if (!active) return;
         const role = (workspace.role || '').toLowerCase();
         setCanAccessAdmin(role === 'admin' || role === 'owner');
         const { data, error } = await supabase.rpc('get_nav_counts');
@@ -326,8 +327,8 @@ export default function AppLayout() {
         setPendingApprovals(row?.pending_approvals ?? 0);
         setUnreadNotifications(row?.unread_notifications ?? 0);
       } catch {
-        if (!active) return;
-        setCanAccessAdmin(false);
+        // Transient error — keep the current canAccessAdmin value; don't reset to false
+        // so the sidebar doesn't blink between re-runs.
       }
     };
 
@@ -340,7 +341,8 @@ export default function AppLayout() {
       active = false;
       if (intervalId) window.clearInterval(intervalId);
     };
-  }, [user]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]); // re-run only when the authenticated user changes, not on same-user reference changes
 
   const handleSignOut = async () => {
     await signOut();

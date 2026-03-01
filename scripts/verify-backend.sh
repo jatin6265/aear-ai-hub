@@ -23,6 +23,10 @@ required_files=(
   "supabase/functions/agent-set-enabled/index.ts"
   "supabase/functions/agent-detail/index.ts"
   "supabase/functions/stripe-webhook/index.ts"
+  "supabase/functions/webhook-slack/index.ts"
+  "supabase/functions/webhook-whatsapp/index.ts"
+  "supabase/functions/webhook-telegram/index.ts"
+  "supabase/functions/webhook-teams/index.ts"
   "supabase/functions/create-checkout-session/index.ts"
   "supabase/functions/razorpay-webhook/index.ts"
   "supabase/functions/report-usage/index.ts"
@@ -37,6 +41,7 @@ required_files=(
   "scripts/verify-runtime-wiring.sh"
   "scripts/verify-worker-runtime-drift.sh"
   "scripts/verify-worker-deploy-readiness.sh"
+  "scripts/test-openclaw-bridge.mjs"
   "scripts/setup-e2e.sh"
 )
 

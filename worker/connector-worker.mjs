@@ -1,6 +1,8 @@
+import { createRequire } from "node:module";
 import { createClient } from "@supabase/supabase-js";
 import crypto from "node:crypto";
 import dns from "node:dns/promises";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -103,9 +105,15 @@ const workerId = process.env.CONNECTOR_WORKER_ID || "node-connector-worker";
 const pollIntervalMs = Number(process.env.WORKER_POLL_INTERVAL_MS || 8000);
 const staleRecoveryMinutes = Number(process.env.WORKER_STALE_RECOVERY_MINUTES || 20);
 const runModel = process.env.OPENAI_MODEL || "gpt-4o-mini";
+const agentRuntimeEngine = String(process.env.AGENT_RUNTIME_ENGINE || "openclaw").trim().toLowerCase();
+const openclawStrict = String(process.env.OPENCLAW_STRICT || "false").trim().toLowerCase() === "true";
+const openclawTurnTimeoutMs = Math.max(5_000, Number(process.env.OPENCLAW_TURN_TIMEOUT_MS || 120_000));
+const openclawRpcCommand = String(process.env.OPENCLAW_RPC_COMMAND || "").trim();
 const webhookSigningSecret = process.env.WEBHOOK_SIGNING_SECRET || "";
 const credentialRefreshIntervalMs = Number(process.env.CREDENTIAL_REFRESH_INTERVAL_MS || 10 * 60 * 1000);
 const syncDispatchIntervalMs = Number(process.env.CONNECTOR_SYNC_DISPATCH_INTERVAL_MS || 60 * 1000);
+const insightDispatchIntervalMs = Number(process.env.INSIGHT_DISPATCH_INTERVAL_MS || 60 * 60 * 1000); // 1 hour
+const predictiveRefreshIntervalMs = Number(process.env.PREDICTIVE_REFRESH_INTERVAL_MS || 60 * 60 * 1000); // 1 hour
 const connectorDiscoveryTimeoutMs = Number(process.env.CONNECTOR_DISCOVERY_TIMEOUT_MS || 120_000);
 const connectorCallbackTimeoutMs = Number(process.env.CONNECTOR_CALLBACK_TIMEOUT_MS || 15_000);
 const connectorCallbackMaxAttempts = Math.max(1, Number(process.env.CONNECTOR_CALLBACK_MAX_ATTEMPTS || 6));
@@ -124,6 +132,8 @@ const workerAllowUnverifiedRuntimePair = String(process.env.WORKER_ALLOW_UNVERIF
 let lastCredentialRefreshAt = 0;
 let lastSyncDispatchAt = 0;
 let lastHeartbeatAt = 0;
+let lastInsightDispatchAt = 0;
+let lastPredictiveRefreshAt = 0;
 
 if (!supabaseUrl || !serviceRoleKey || !workerToken) {
   console.error(
@@ -156,6 +166,35 @@ const supabase = createClient(supabaseUrl, serviceRoleKey, {
 });
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// ── TypeScript service layer loader ──────────────────────────────────────────
+// Lazy-loads the compiled TypeScript AgentLoop from worker/dist.
+// Requires `npm run worker:build` (compiles worker/src → worker/dist).
+// Falls back to the legacy inline engine when dist is absent.
+const _cjsRequire = createRequire(import.meta.url);
+let _tsAgentLoop = null;
+let _tsAgentLoopLoaded = false;
+async function loadTsAgentLoop() {
+  if (_tsAgentLoopLoaded) return _tsAgentLoop;
+  _tsAgentLoopLoaded = true;
+  try {
+    const { getAgentLoop } = _cjsRequire("./dist/runtime/agentLoop.js");
+    _tsAgentLoop = getAgentLoop();
+    console.log(
+      "[agent-runtime] TypeScript service layer loaded — " +
+      "real pgvector embeddings, governance middleware, approval flow, and usage_events active.",
+    );
+  } catch {
+    console.warn(
+      "[agent-runtime] TypeScript dist not found. " +
+      "Run `npm run worker:build` to enable the full pipeline " +
+      "(real embeddings, governance, usage_events). " +
+      "Falling back to legacy keyword-search engine.",
+    );
+  }
+  return _tsAgentLoop;
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 function parseSupabaseHost(value) {
   try {
@@ -1339,6 +1378,17 @@ async function discoverFromGoogleSheets(connection) {
     const headerRow = Array.isArray(rows[0]) ? rows[0] : [];
     const headers = headerRow.map((value, index) => sanitizeName(value) || `column_${index + 1}`);
     const dataRows = rows.slice(1).filter((row) => Array.isArray(row));
+    const sampleRows = dataRows.slice(0, 30).map((row) => {
+      const record = {};
+      const limit = Math.max(headers.length, row.length);
+      for (let index = 0; index < limit; index += 1) {
+        const key = headers[index] || `column_${index + 1}`;
+        const rawValue = row[index];
+        if (rawValue === undefined || rawValue === null || String(rawValue).trim() === "") continue;
+        record[key] = String(rawValue).slice(0, 180);
+      }
+      return record;
+    }).filter((row) => Object.keys(row).length > 0);
 
     const columns =
       headers.length > 0
@@ -1379,6 +1429,7 @@ async function discoverFromGoogleSheets(connection) {
       sensitivity,
       description: `Discovered Google Sheet tab ${title}`,
       embeddingCoverage: 0,
+      sampleRows,
       columns:
         columns.length > 0
           ? columns
@@ -2778,9 +2829,395 @@ function countTokens(text) {
   return Math.max(1, Math.round(String(text || "").length / 4));
 }
 
-async function createCompletion(prompt, context) {
+function normalizeText(value) {
+  return String(value || "").trim();
+}
+
+function isSqlIntentPrompt(prompt) {
+  return /\b(sql|query|database|table|collection|anomaly|anomalies|insight|insights|summarize|summary|trend|outlier|revenue|invoice|order|customer|from)\b/i.test(
+    String(prompt || ""),
+  );
+}
+
+function chooseBestConnectionByPrompt(prompt, rows) {
+  const value = String(prompt || "").toLowerCase();
+  for (const row of rows) {
+    const name = String(row?.name || "").trim().toLowerCase();
+    if (!name) continue;
+    if (value.includes(name)) return String(row.id);
+  }
+  const active = rows.find((row) => String(row?.status || "").toLowerCase() === "active");
+  if (active?.id) return String(active.id);
+  return rows[0]?.id ? String(rows[0].id) : "";
+}
+
+async function resolveConnectionIdForRuntime({ tenantId, prompt, preferredConnectionId }) {
+  if (preferredConnectionId) return String(preferredConnectionId);
+
+  const withArchive = await supabase
+    .from("api_connections")
+    .select("id, name, status")
+    .eq("tenant_id", tenantId)
+    .eq("is_archived", false)
+    .limit(120);
+
+  let rows = withArchive.data || [];
+  if (withArchive.error) {
+    const fallback = await supabase
+      .from("api_connections")
+      .select("id, name, status")
+      .eq("tenant_id", tenantId)
+      .limit(120);
+    if (fallback.error) return "";
+    rows = fallback.data || [];
+  }
+
+  if (!rows || rows.length === 0) return "";
+  return chooseBestConnectionByPrompt(prompt, rows);
+}
+
+async function loadSchemaContext(connectionId) {
+  if (!connectionId) return "";
+
+  const entitiesQuery = await supabase
+    .from("connection_entities")
+    .select("id, name, description, source_kind, risk_level, sensitivity, row_count")
+    .eq("connection_id", connectionId)
+    .order("row_count", { ascending: false })
+    .limit(30);
+
+  if (entitiesQuery.error || !entitiesQuery.data || entitiesQuery.data.length === 0) return "";
+  const entities = entitiesQuery.data;
+  const entityIds = entities.map((row) => row.id).filter(Boolean);
+
+  let columns = [];
+  if (entityIds.length > 0) {
+    const columnsQuery = await supabase
+      .from("connection_columns")
+      .select("entity_id, name, data_type, is_nullable, sensitivity, position_index")
+      .in("entity_id", entityIds)
+      .order("position_index", { ascending: true })
+      .limit(400);
+    if (!columnsQuery.error && Array.isArray(columnsQuery.data)) {
+      columns = columnsQuery.data;
+    }
+  }
+
+  const columnsByEntity = new Map();
+  for (const column of columns) {
+    const key = String(column.entity_id);
+    if (!columnsByEntity.has(key)) columnsByEntity.set(key, []);
+    columnsByEntity.get(key).push(column);
+  }
+
+  const lines = [];
+  for (const entity of entities) {
+    const entityCols = (columnsByEntity.get(String(entity.id)) || [])
+      .slice(0, 12)
+      .map((column) => `${column.name}:${column.data_type}${column.is_nullable ? "" : "!"}`);
+
+    lines.push(
+      `- ${entity.name} [${entity.source_kind}] rows=${entity.row_count || 0} risk=${entity.risk_level || "low"} sensitivity=${entity.sensitivity || "normal"} :: ${
+        entity.description || ""
+      }`,
+    );
+    if (entityCols.length > 0) {
+      lines.push(`  columns: ${entityCols.join(", ")}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+async function generateSqlFromPrompt({ prompt, schemaContext }) {
+  if (!openaiApiKey || !schemaContext || !isSqlIntentPrompt(prompt)) return "";
+
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${openaiApiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: runModel,
+      temperature: 0.1,
+      max_tokens: 280,
+      messages: [
+        {
+          role: "system",
+          content:
+            "Generate exactly one PostgreSQL read-only SQL query. Use only schema provided. Single statement, no semicolon, no comments, no DDL/DML.",
+        },
+        {
+          role: "user",
+          content: [
+            `Prompt: ${prompt}`,
+            "",
+            "Schema context:",
+            schemaContext,
+            "",
+            "Return SQL only.",
+          ].join("\n"),
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) return "";
+  const payload = await response.json().catch(() => null);
+  const text = normalizeText(payload?.choices?.[0]?.message?.content);
+  if (!text) return "";
+  return text.replace(/;+/g, "").trim();
+}
+
+async function loadTimelineContext(tenantId) {
+  const { data, error } = await supabase
+    .from("context_events")
+    .select("event_type, source_type, content, created_at")
+    .eq("tenant_id", tenantId)
+    .order("created_at", { ascending: false })
+    .limit(12);
+  if (error || !Array.isArray(data)) return [];
+  return data.map((row) => ({
+    event_type: row.event_type || "event",
+    source_type: row.source_type || "source",
+    content: String(row.content || ""),
+    created_at: row.created_at || null,
+  }));
+}
+
+async function runCommand(bin, args, stdin, timeoutMs) {
+  return await new Promise((resolve, reject) => {
+    const child = spawn(bin, args, {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: process.env,
+    });
+
+    let stdout = "";
+    let stderr = "";
+    const timer = setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // ignore
+      }
+      reject(new Error(`Command timed out: ${bin}`));
+    }, timeoutMs);
+
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        reject(new Error(`Command failed (${code}): ${stderr || stdout}`));
+        return;
+      }
+      resolve(stdout);
+    });
+
+    child.stdin.write(stdin);
+    child.stdin.end();
+  });
+}
+
+function parseJsonLines(raw) {
+  const parsed = [];
+  for (const line of String(raw || "").split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      parsed.push(JSON.parse(trimmed));
+    } catch {
+      // ignore non-json lines
+    }
+  }
+  return parsed;
+}
+
+function extractOpenClawText(events, fallbackText) {
+  for (const event of events) {
+    if (!event || typeof event !== "object") continue;
+    const payload = event.result || event.data || event.delta || event.message || null;
+    const maybeText = normalizeText(
+      payload?.output_text ||
+        payload?.text ||
+        payload?.content ||
+        (Array.isArray(payload?.content) ? payload.content.map((item) => item?.text || "").join("\n") : ""),
+    );
+    if (maybeText) return maybeText;
+  }
+  return normalizeText(fallbackText);
+}
+
+function buildOpenClawCommand() {
+  if (openclawRpcCommand) {
+    const parts = openclawRpcCommand.split(/\s+/g).filter(Boolean);
+    return { bin: parts[0], args: parts.slice(1) };
+  }
+  return { bin: "openclaw", args: ["agent", "--mode", "rpc", "--json"] };
+}
+
+function buildDeterministicCompletion(args, reason) {
+  const rows = Array.isArray(args.sqlRows) ? args.sqlRows : [];
+  const rowCount = rows.length;
+  const contextCount = Array.isArray(args.contextChunks) ? args.contextChunks.length : 0;
+  const timelineCount = Array.isArray(args.timeline) ? args.timeline.length : 0;
+
+  const numericStats = [];
+  if (rowCount > 0) {
+    const keys = Object.keys(rows[0] || {});
+    for (const key of keys) {
+      const values = rows
+        .map((row) => Number(row?.[key]))
+        .filter((value) => Number.isFinite(value));
+      if (values.length < Math.max(2, Math.ceil(rowCount * 0.6))) continue;
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+      const avg = values.reduce((acc, value) => acc + value, 0) / values.length;
+      numericStats.push({
+        key,
+        min,
+        max,
+        avg,
+      });
+      if (numericStats.length >= 3) break;
+    }
+  }
+
+  const insights = [];
+  const anomalies = [];
+  const nextActions = [];
+
+  if (rowCount > 0) {
+    insights.push(`Retrieved ${rowCount} row(s) from governed data execution.`);
+    for (const stat of numericStats) {
+      insights.push(
+        `${stat.key}: avg ${stat.avg.toFixed(2)}, min ${stat.min.toFixed(2)}, max ${stat.max.toFixed(2)}.`,
+      );
+      if (stat.max > stat.avg * 2.5) {
+        anomalies.push(`${stat.key} contains high outlier spread (max is >2.5x average in returned rows).`);
+      }
+    }
+    if (numericStats.length === 0) {
+      insights.push("Returned rows are mostly non-numeric fields; qualitative/entity-level analysis is available.");
+    }
+  } else if (contextCount > 0) {
+    insights.push(`Retrieved ${contextCount} indexed context snippet(s), but no row-level query results.`);
+    anomalies.push("Only metadata/schema-level evidence is available for this request.");
+  } else {
+    insights.push("No data rows or indexed context were available to analyze.");
+    anomalies.push("Data coverage is insufficient for reliable anomaly detection.");
+  }
+
+  if (timelineCount > 0) {
+    insights.push(`Included ${timelineCount} recent timeline event(s) for organizational context.`);
+  }
+
+  if (anomalies.length === 0) {
+    anomalies.push("No statistically obvious anomaly in available sample; confidence limited by sample size.");
+  }
+
+  if (rowCount === 0) {
+    nextActions.push("Run a source-level extraction/read tool to fetch actual row values before anomaly analysis.");
+  } else {
+    nextActions.push("Expand sample window (time range / row limit) and re-run to validate anomaly consistency.");
+  }
+  nextActions.push("Request column-level business definitions to improve root-cause interpretation.");
+  if (args.sqlQuery) {
+    nextActions.push("Validate SQL query intent against target source fields to ensure analysis scope is correct.");
+  }
+
+  return [
+    "1) Summary",
+    `Deterministic data-grounded response generated (${reason}) without model synthesis.`,
+    "",
+    "2) Key Insights",
+    ...insights.map((line) => `- ${line}`),
+    "",
+    "3) Anomalies / Risks",
+    ...anomalies.map((line) => `- ${line}`),
+    "",
+    "4) Recommended Next Actions",
+    ...nextActions.map((line, index) => `${index + 1}. ${line}`),
+  ].join("\n");
+}
+
+async function createCompletion(args) {
+  const userContent = [
+    `Prompt: ${args.prompt}`,
+    "",
+    args.contextChunks.length > 0 ? `Semantic context:\n${args.contextChunks.join("\n")}` : "Semantic context: none",
+    "",
+    args.timeline.length > 0
+      ? `Timeline context:\n${args.timeline.map((event) => `- ${event.created_at || "unknown"} [${event.event_type}] ${event.content}`).join("\n")}`
+      : "Timeline context: none",
+    "",
+    args.sqlQuery ? `Executed SQL: ${args.sqlQuery}` : "Executed SQL: none",
+    args.sqlRows.length > 0 ? `SQL rows sample: ${JSON.stringify(args.sqlRows.slice(0, 15))}` : "SQL rows sample: none",
+  ].join("\n");
+
+  const systemContent = [
+    "You are OpsAI internal enterprise assistant.",
+    "Answer only from provided context and SQL/tool outputs.",
+    "Never fabricate data.",
+    "When user asks for strategy/architecture, answer as a decisive founder-architect with explicit priorities and phased execution.",
+    "Use this response structure exactly:",
+    "1) Summary",
+    "2) Key Insights",
+    "3) Anomalies / Risks",
+    "4) Recommended Next Actions",
+    "If evidence is insufficient, state what is missing and what exact query/tool to run next.",
+  ].join("\n");
+
+  if (agentRuntimeEngine === "openclaw") {
+    const command = buildOpenClawCommand();
+    const payload = {
+      jsonrpc: "2.0",
+      id: crypto.randomUUID(),
+      method: "agent.run",
+      params: {
+        model: runModel,
+        stream: false,
+        messages: [
+          { role: "system", content: systemContent },
+          { role: "user", content: userContent },
+        ],
+      },
+    };
+
+    try {
+      const raw = await runCommand(command.bin, command.args, `${JSON.stringify(payload)}\n`, openclawTurnTimeoutMs);
+      const events = parseJsonLines(raw);
+      const text = extractOpenClawText(events, raw);
+      if (text) {
+        return {
+          text,
+          model: runModel,
+          engine: "openclaw",
+        };
+      }
+      if (openclawStrict) {
+        throw new Error("OpenClaw returned empty output");
+      }
+    } catch (error) {
+      if (openclawStrict) throw error;
+    }
+  }
+
   if (!openaiApiKey) {
-    return `Processed request: ${prompt}\n\nContext sources: ${context.length}.`;
+    return {
+      text: buildDeterministicCompletion(args, "OPENAI_API_KEY missing"),
+      model: "deterministic",
+      engine: "deterministic",
+    };
   }
 
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -2792,30 +3229,32 @@ async function createCompletion(prompt, context) {
     body: JSON.stringify({
       model: runModel,
       temperature: 0.2,
-      max_tokens: 500,
+      max_tokens: 700,
       messages: [
-        {
-          role: "system",
-          content: "You are an enterprise AI agent runtime. Reply with concise, actionable output grounded in provided context.",
-        },
-        {
-          role: "user",
-          content: [
-            `Prompt: ${prompt}`,
-            context.length > 0 ? `Context:\n${context.join("\n\n")}` : "Context: none",
-          ].join("\n\n"),
-        },
+        { role: "system", content: systemContent },
+        { role: "user", content: userContent },
       ],
     }),
   });
 
   if (!response.ok) {
     const text = await response.text();
+    if (response.status === 429 || response.status >= 500) {
+      return {
+        text: buildDeterministicCompletion(args, `model unavailable (${response.status})`),
+        model: "deterministic",
+        engine: "deterministic",
+      };
+    }
     throw new Error(`OpenAI completion failed (${response.status}): ${text}`);
   }
 
   const payload = await response.json();
-  return String(payload?.choices?.[0]?.message?.content ?? "").trim() || "Completed with no textual output.";
+  return {
+    text: normalizeText(payload?.choices?.[0]?.message?.content) || "Completed with no textual output.",
+    model: runModel,
+    engine: "openai",
+  };
 }
 
 async function runAgentRuntimeJobs() {
@@ -2830,7 +3269,7 @@ async function runAgentRuntimeJobs() {
       const [{ data: run, error: runError }, { data: agent, error: agentError }] = await Promise.all([
         supabase
           .from("agent_runs")
-          .select("id, tenant_id, reservation_id, input, status")
+          .select("id, tenant_id, requested_by, reservation_id, input, status")
           .eq("id", job.run_id)
           .maybeSingle(),
         supabase
@@ -2844,6 +3283,7 @@ async function runAgentRuntimeJobs() {
       if (agentError) throw agentError;
       if (!run) throw new Error("Agent run not found");
       if (!agent) throw new Error("Agent not found");
+      if (!run.requested_by) throw new Error("agent_runs.requested_by is required for governed runtime SQL execution");
 
       await supabase
         .from("agent_runs")
@@ -2854,6 +3294,87 @@ async function runAgentRuntimeJobs() {
         })
         .eq("id", run.id);
 
+      // ── TypeScript service layer (preferred) ──────────────────────────────
+      // Handles: real pgvector embeddings via OpenAI, hybrid_search RPC,
+      // governance middleware (RACI + risk), approval flow, audit_logs,
+      // usage_events metering, and agent_runs final status update.
+      const tsLoop = await loadTsAgentLoop();
+      if (tsLoop) {
+        await tsLoop.runTurn(job.run_id);
+
+        // Read final state that AgentLoop wrote to agent_runs.
+        const { data: finalRun } = await supabase
+          .from("agent_runs")
+          .select("id, tenant_id, status, reservation_id, input_tokens, output_tokens, total_cost_credits")
+          .eq("id", job.run_id)
+          .maybeSingle();
+
+        const finalStatus = String(finalRun?.status ?? "success").toLowerCase();
+        const isWaitingApproval = finalStatus === "waiting_approval";
+        const inputTok = Math.max(0, Number(finalRun?.input_tokens ?? 0));
+        const outputTok = Math.max(0, Number(finalRun?.output_tokens ?? 0));
+        const actualCredits =
+          Number(finalRun?.total_cost_credits ?? 0) ||
+          Math.max(1, Math.round((inputTok + outputTok) / 40));
+
+        // Mark job as complete.
+        await supabase
+          .from("agent_run_jobs")
+          .update({
+            status: "success",
+            result: {
+              durationMs: Math.max(1, Date.now() - startedAtMs),
+              actualCredits,
+              engine: "typescript_service",
+            },
+            finished_at: new Date().toISOString(),
+            worker_id: workerId,
+            updated_at: new Date().toISOString(),
+            last_error: null,
+          })
+          .eq("id", job.id);
+
+        // Write billing meter events (separate from usage_events that AgentLoop already wrote).
+        if ((inputTok > 0 || outputTok > 0) && finalRun) {
+          await supabase.from("usage_meter_events").insert([
+            {
+              tenant_id: finalRun.tenant_id,
+              run_id: finalRun.id,
+              event_type: "llm_input",
+              quantity: inputTok,
+              unit: "tokens",
+              cost_credits: Math.max(1, Math.round(inputTok / 80)),
+              details: { engine: "typescript_service" },
+            },
+            {
+              tenant_id: finalRun.tenant_id,
+              run_id: finalRun.id,
+              event_type: "llm_output",
+              quantity: outputTok,
+              unit: "tokens",
+              cost_credits: Math.max(1, Math.round(outputTok / 60)),
+              details: { engine: "typescript_service" },
+            },
+          ]);
+        }
+
+        // Finalize credit reservation when run is not waiting for approval.
+        if (finalRun?.reservation_id && !isWaitingApproval) {
+          await supabase.rpc("finalize_credits", {
+            p_reservation_id: finalRun.reservation_id,
+            p_actual_credits: actualCredits,
+            p_status: "success",
+            p_run_id: finalRun.id,
+          });
+        }
+
+        continue; // TypeScript layer handled everything; skip legacy block below.
+      }
+      // ─────────────────────────────────────────────────────────────────────
+
+      // ── LEGACY PATH (keyword RAG only — no real embeddings, no governance middleware) ──
+      // Active only when TypeScript dist is not built.
+      // Run `npm run worker:build` to enable the full pipeline.
       await supabase.rpc("complete_agent_run_step", {
         p_run_id: run.id,
         p_step_type: "planner",
@@ -2865,10 +3386,21 @@ async function runAgentRuntimeJobs() {
 
       const input = run.input || {};
       const prompt = String(input.prompt || input.message || input.query || "Run agent task").trim();
-      const ragEnabled = Boolean(agent.config?.rag_enabled ?? true);
-      const connectionId = String(input.connectionId || agent.source_connection_id || "").trim();
+      const agentConfig = agent.config && typeof agent.config === "object" ? agent.config : {};
+      const ragEnabled = Boolean(agentConfig.rag_enabled ?? true);
+      let connectionId = normalizeText(input.connectionId || agent.source_connection_id || "");
       const contextChunks = [];
+      let sqlQuery = normalizeText(input.sql || "");
       let sqlRows = [];
+      let timelineEvents = [];
+
+      if (!connectionId) {
+        connectionId = await resolveConnectionIdForRuntime({
+          tenantId: run.tenant_id,
+          prompt,
+          preferredConnectionId: "",
+        });
+      }
 
       if (ragEnabled && prompt) {
         const { data: docs, error: docsError } = await supabase.rpc("search_knowledge_documents_hybrid", {
@@ -2892,24 +3424,63 @@ async function runAgentRuntimeJobs() {
         });
       }
 
-      if (String(input.sql || "").trim() && connectionId) {
-        const sql = String(input.sql).trim();
-        const { data: sqlResult, error: sqlError } = await supabase.rpc("execute_tenant_sql_governed", {
+      timelineEvents = await loadTimelineContext(run.tenant_id);
+
+      if (!sqlQuery && connectionId && isSqlIntentPrompt(prompt)) {
+        const schemaContext = await loadSchemaContext(connectionId);
+        sqlQuery = await generateSqlFromPrompt({
+          prompt,
+          schemaContext,
+        });
+      }
+
+      if (sqlQuery && connectionId) {
+        let sqlResult = null;
+        let sqlError = null;
+
+        const governedServiceAttempt = await supabase.rpc("execute_tenant_sql_governed_service", {
+          p_tenant_id: run.tenant_id,
+          p_user_id: run.requested_by,
           p_connection_id: connectionId,
-          p_sql: sql,
+          p_sql: sqlQuery,
           p_limit: 200,
           p_resource: "agent_runtime",
           p_action: "database_query",
         });
+
+        if (!governedServiceAttempt.error) {
+          sqlResult = governedServiceAttempt.data;
+        } else if (isMissingRpc(governedServiceAttempt.error)) {
+          const governedFallbackAttempt = await supabase.rpc("execute_tenant_sql_governed", {
+            p_connection_id: connectionId,
+            p_sql: sqlQuery,
+            p_limit: 200,
+            p_resource: "agent_runtime",
+            p_action: "database_query",
+          });
+          sqlResult = governedFallbackAttempt.data;
+          sqlError = governedFallbackAttempt.error;
+        } else {
+          sqlError = governedServiceAttempt.error;
+        }
+
         if (sqlError) throw sqlError;
-        sqlRows = sqlResult || [];
+        const sqlEnvelope = Array.isArray(sqlResult) ? sqlResult[0] : null;
+        const sqlSuccess = Boolean(sqlEnvelope?.success);
+        const sqlErrorMessage = normalizeText(sqlEnvelope?.error || "");
+        if (!sqlSuccess && sqlErrorMessage) {
+          throw new Error(sqlErrorMessage);
+        }
+        sqlRows = Array.isArray(sqlEnvelope?.rows)
+          ? sqlEnvelope.rows.filter((row) => row && typeof row === "object")
+          : [];
 
         await supabase.rpc("record_tool_execution", {
           p_run_id: run.id,
           p_tool_name: "database_query",
           p_status: "success",
-          p_tool_input: { sql, connectionId },
-          p_tool_output: { result: sqlRows },
+          p_tool_input: { sql: sqlQuery, connectionId },
+          p_tool_output: { result: sqlRows.slice(0, 30), rowCount: sqlRows.length },
           p_latency_ms: 0,
           p_error: null,
           p_risk_level: "medium",
@@ -2919,7 +3490,14 @@ async function runAgentRuntimeJobs() {
         });
       }
 
-      const completion = await createCompletion(prompt, contextChunks);
+      const completionResult = await createCompletion({
+        prompt,
+        contextChunks,
+        sqlRows,
+        sqlQuery,
+        timeline: timelineEvents,
+      });
+      const completion = completionResult.text;
       const inputTokens = countTokens(prompt);
       const outputTokens = countTokens(completion);
       const actualCredits = Math.max(1, Math.round((inputTokens + outputTokens) / 40) + (sqlRows.length > 0 ? 2 : 0));
@@ -2929,7 +3507,8 @@ async function runAgentRuntimeJobs() {
         p_step_type: "llm_call",
         p_status: "success",
         p_data: {
-          model: runModel,
+          model: completionResult.model,
+          engine: completionResult.engine,
           completion_preview: completion.slice(0, 280),
         },
         p_cost_credits: actualCredits,
@@ -2941,8 +3520,13 @@ async function runAgentRuntimeJobs() {
           status: "success",
           output: {
             message: completion,
+            runtimeEngine: completionResult.engine,
+            runtimeModel: completionResult.model,
+            connectionId: connectionId || null,
+            sqlQuery: sqlQuery || null,
             contextSources: contextChunks.length,
             sqlRows: sqlRows.length,
+            timelineEvents: timelineEvents.length,
           },
           input_tokens: inputTokens,
           output_tokens: outputTokens,
@@ -2958,7 +3542,8 @@ async function runAgentRuntimeJobs() {
           status: "success",
           result: {
             durationMs: Math.max(1, Date.now() - startedAtMs),
-            model: runModel,
+            model: completionResult.model,
+            engine: completionResult.engine,
             actualCredits,
           },
           finished_at: new Date().toISOString(),
@@ -2976,7 +3561,7 @@ async function runAgentRuntimeJobs() {
           quantity: inputTokens,
           unit: "tokens",
           cost_credits: Math.max(1, Math.round(inputTokens / 80)),
-          details: { model: runModel },
+          details: { model: completionResult.model, engine: completionResult.engine },
         },
         {
           tenant_id: run.tenant_id,
@@ -2985,7 +3570,7 @@ async function runAgentRuntimeJobs() {
           quantity: outputTokens,
           unit: "tokens",
           cost_credits: Math.max(1, Math.round(outputTokens / 60)),
-          details: { model: runModel },
+          details: { model: completionResult.model, engine: completionResult.engine },
         },
       ]);
 
@@ -3126,6 +3711,18 @@ async function runWebhookDeliveries() {
   }
 }
 
+async function maybeExpireStaleApprovals() {
+  const { data, error } = await supabase.rpc("expire_stale_waiting_approval_runs");
+  if (error && !isMissingRpc(error)) throw error;
+  const payload = data ?? {};
+  if ((payload.expiredRuns ?? 0) > 0 || (payload.expiredApprovals ?? 0) > 0) {
+    console.log(
+      `[expire-approvals] ${payload.expiredApprovals ?? 0} approvals expired, ` +
+      `${payload.expiredRuns ?? 0} waiting_approval runs failed`,
+    );
+  }
+}
+
 async function maybeRefreshCredentials() {
   const now = Date.now();
   if (now - lastCredentialRefreshAt < credentialRefreshIntervalMs) return;
@@ -3153,6 +3750,63 @@ async function maybeRefreshCredentials() {
   const payload = await response.json().catch(() => null);
   if (payload?.ok) {
     console.log("credential refresh", payload);
+  }
+}
+
+async function maybeDispatchProactiveInsights() {
+  const now = Date.now();
+  if (now - lastInsightDispatchAt < insightDispatchIntervalMs) return;
+  lastInsightDispatchAt = now;
+
+  const response = await fetch(`${supabaseUrl}/functions/v1/proactive-insights`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-worker-token": workerToken,
+      Authorization: `Bearer ${serviceRoleKey}`,
+    },
+    body: JSON.stringify({}),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    console.error("[proactive-insights] dispatch failed", response.status, text);
+    return;
+  }
+
+  const payload = await response.json().catch(() => null);
+  if (payload?.ok) {
+    console.log(`[proactive-insights] Generated ${payload.succeeded}/${payload.processed} tenant briefings`);
+  }
+}
+
+async function maybeRefreshPredictiveInsights() {
+  const now = Date.now();
+  if (now - lastPredictiveRefreshAt < predictiveRefreshIntervalMs) return;
+  lastPredictiveRefreshAt = now;
+
+  const response = await fetch(`${supabaseUrl}/functions/v1/predictive-refresh`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-worker-token": workerToken,
+      Authorization: `Bearer ${serviceRoleKey}`,
+    },
+    body: JSON.stringify({}),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    console.error("[predictive-refresh] dispatch failed", response.status, text);
+    return;
+  }
+
+  const payload = await response.json().catch(() => null);
+  if (payload?.ok) {
+    console.log(
+      `[predictive-refresh] ${payload.succeeded}/${payload.processed} tenants — ` +
+      `${payload.totalGenerated} anomalies generated, ${payload.totalResolved} resolved`,
+    );
   }
 }
 
@@ -3190,8 +3844,11 @@ async function mainLoop() {
   );
   while (true) {
     await runWorkerStep("recover_stale_jobs", recoverStaleJobs);
+    await runWorkerStep("expire_stale_approvals", maybeExpireStaleApprovals);
     await runWorkerStep("enqueue_due_connector_sync_jobs", maybeEnqueueDueConnectorSyncs);
     await runWorkerStep("credential_refresh", maybeRefreshCredentials);
+    await runWorkerStep("proactive_insights", maybeDispatchProactiveInsights);
+    await runWorkerStep("predictive_refresh", maybeRefreshPredictiveInsights);
     await runWorkerStep("connector_jobs", runConnectorJobs);
     await runWorkerStep("embedding_jobs", runEmbeddingJobs);
     await runWorkerStep("agent_runtime_jobs", runAgentRuntimeJobs);

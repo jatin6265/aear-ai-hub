@@ -57,6 +57,9 @@
     "agent-regenerate",
     "stripe-webhook",
     "webhook-slack",
+    "webhook-whatsapp",
+    "webhook-telegram",
+    "webhook-teams",
     "generate-insight",
     "provision-user-workspace",
     "send-invitation",
@@ -70,6 +73,9 @@
     "create-checkout-session",
     "report-usage",
     "check-plan-limits",
-    "razorpay-webhook"
+    "razorpay-webhook",
+    "risk-correlations",
+    "proactive-insights",
+    "predictive-refresh"
   ]
 }

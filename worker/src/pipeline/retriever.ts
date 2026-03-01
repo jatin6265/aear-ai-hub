@@ -144,6 +144,7 @@ export class Retriever {
       p_query: query,
       p_query_embedding: queryEmbedding,
       p_limit: limit,
+      p_tenant_id: tenantId,
     });
 
     if (error) {

@@ -69,7 +69,28 @@ export function startIngestionWorker() {
 
       return { success: true, chunks: dedupedChunks.length };
     } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
       console.error(`Ingestion failed for job ${job.id}:`, err);
+      // Write a failure event so the user sees it in their knowledge feed — non-fatal.
+      try {
+        await supabase.getClient().from('context_events').insert({
+          tenant_id: normalized.tenantId,
+          source_type: normalized.sourceKind,
+          source_id: normalized.sourceId,
+          event_type: 'ingestion_failed',
+          content: `Ingestion failed after ${(job.attemptsMade ?? 0) + 1} attempt(s): ${errorMessage}`,
+          metadata: {
+            error: errorMessage,
+            job_id: job.id,
+            source_kind: normalized.sourceKind,
+            source_id: normalized.sourceId,
+            attempt: (job.attemptsMade ?? 0) + 1,
+            pipeline_version: 'phase1-v1',
+          },
+        });
+      } catch {
+        // Non-fatal: do not suppress the original error.
+      }
       throw err;
     }
   });

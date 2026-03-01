@@ -215,6 +215,8 @@ Return ONLY valid JSON matching this exact schema:
    */
   async saveAgent(tenantId: string, userId: string, blueprint: AgentBlueprint): Promise<string> {
     const supabase = getSupabaseService();
+    const slug = slugify(blueprint.name);
+    const domain = inferDomain(blueprint.description, blueprint.name);
 
     const { data, error } = await supabase.getClient()
       .from('ai_agents')
@@ -222,16 +224,18 @@ Return ONLY valid JSON matching this exact schema:
         tenant_id: tenantId,
         created_by: userId,
         name: blueprint.name,
+        slug,
+        domain,
         description: blueprint.description,
-        model: blueprint.model,
-        system_prompt: blueprint.system_prompt,
         config: {
+          model: blueprint.model,
+          system_prompt: blueprint.system_prompt,
           tool_ids: blueprint.tool_ids,
           mcp_server_ids: blueprint.mcp_server_ids,
           risk_policies: blueprint.risk_policies,
           memory_config: blueprint.memory_config,
         },
-        status: 'active',
+        status: 'ready',
       })
       .select('id')
       .single();
@@ -264,6 +268,25 @@ function clampTurns(value: unknown): number {
   const turns = Number(value ?? 10);
   if (!Number.isFinite(turns)) return 10;
   return Math.max(1, Math.min(50, Math.floor(turns)));
+}
+
+function slugify(value: string): string {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return normalized || 'generated_agent';
+}
+
+function inferDomain(...hints: string[]): string {
+  const text = hints.join(' ').toLowerCase();
+  if (/(finance|invoice|revenue|accounting|payment)/.test(text)) return 'finance';
+  if (/(hr|employee|people|payroll|talent)/.test(text)) return 'hr';
+  if (/(devops|deploy|infrastructure|incident|monitor)/.test(text)) return 'devops';
+  if (/(crm|customer|lead|deal|sales|support)/.test(text)) return 'crm';
+  return 'general';
 }
 
 let instance: AgentBuilder | null = null;

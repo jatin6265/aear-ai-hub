@@ -5,8 +5,10 @@ import {
   Bot,
   Database,
   FileText,
+  LayoutList,
   Link2,
   Loader2,
+  Network,
   RotateCcw,
   Search,
   ShieldAlert,
@@ -29,6 +31,10 @@ import { cn } from "@/lib/utils";
 type KnowledgeChip = "all" | "tables" | "documents" | "entities" | "relationships";
 type EntityTypeBadge = "Master Data" | "Transaction" | "Log" | "Config";
 type SensitivityBadge = "Contains PII" | "Financial" | "Safe";
+
+type GraphNode = { id: string; name: string; group: string; sourceKind: string; rowCount: number; sensitivity: string };
+type GraphEdge = { source: string; target: string; type: string; label: string | null };
+type GraphData  = { nodes: GraphNode[]; edges: GraphEdge[] };
 
 type KnowledgeEntityRow =
   SupabaseDatabase["public"]["Functions"]["get_knowledge_entities"]["Returns"][number];
@@ -129,6 +135,93 @@ function entityIcon(entity: KnowledgeEntityCard) {
   return Database;
 }
 
+// ── Org Graph SVG Visualization ───────────────────────────────────────────────
+const GROUP_COLORS: Record<string, { fill: string; stroke: string; text: string }> = {
+  master_data:  { fill: "#dbeafe", stroke: "#3b82f6", text: "#1e40af" },
+  transactions: { fill: "#d1fae5", stroke: "#10b981", text: "#065f46" },
+  logs:         { fill: "#fef3c7", stroke: "#f59e0b", text: "#92400e" },
+  config:       { fill: "#ede9fe", stroke: "#7c3aed", text: "#4c1d95" },
+};
+
+function nodeColor(group: string) {
+  return GROUP_COLORS[group] ?? { fill: "#f1f5f9", stroke: "#94a3b8", text: "#334155" };
+}
+
+function circleLayout(count: number, cx: number, cy: number, r: number) {
+  return Array.from({ length: count }, (_, i) => {
+    const angle = (i / count) * 2 * Math.PI - Math.PI / 2;
+    return { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) };
+  });
+}
+
+function OrgGraph({ data, loading }: { data: GraphData | null; loading: boolean }) {
+  if (loading) {
+    return (
+      <div className="flex h-[420px] items-center justify-center rounded-2xl border border-slate-200 bg-white">
+        <Loader2 className="h-8 w-8 animate-spin text-violet-600" />
+      </div>
+    );
+  }
+
+  if (!data || data.nodes.length === 0) {
+    return (
+      <div className="flex h-[420px] items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white text-center">
+        <div>
+          <Network className="mx-auto h-10 w-10 text-slate-300" />
+          <p className="mt-3 text-sm font-medium text-slate-500">No entity relationships found</p>
+          <p className="mt-1 text-xs text-slate-400">Sync a connection to discover schema relationships.</p>
+        </div>
+      </div>
+    );
+  }
+
+  const W = 680; const H = 420; const CX = W / 2; const CY = H / 2;
+  const R = Math.min(CX - 80, CY - 60, 160 + data.nodes.length * 2);
+  const positions = circleLayout(data.nodes.length, CX, CY, R);
+  const posMap: Record<string, { x: number; y: number }> = {};
+  data.nodes.forEach((n, i) => { posMap[n.id] = positions[i]; });
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="mb-3 flex items-center justify-between">
+        <p className="text-sm font-semibold text-slate-700">
+          Organizational Data Graph — {data.nodes.length} entities, {data.edges.length} relationships
+        </p>
+        <div className="flex gap-3 text-xs text-slate-500">
+          {Object.entries(GROUP_COLORS).map(([group, c]) => (
+            <span key={group} className="flex items-center gap-1">
+              <span className="inline-block h-2.5 w-2.5 rounded-full border" style={{ background: c.fill, borderColor: c.stroke }} />
+              {group.replace("_", " ")}
+            </span>
+          ))}
+        </div>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full overflow-visible" style={{ maxHeight: 380 }}>
+        {/* Edges */}
+        {data.edges.map((e, i) => {
+          const s = posMap[e.source]; const t = posMap[e.target];
+          if (!s || !t) return null;
+          return (
+            <line key={i} x1={s.x} y1={s.y} x2={t.x} y2={t.y}
+              stroke="#cbd5e1" strokeWidth={1.5} strokeDasharray="4 3" opacity={0.7} />
+          );
+        })}
+        {/* Nodes */}
+        {data.nodes.map((n, i) => {
+          const pos = positions[i]; const c = nodeColor(n.group);
+          const label = n.name.length > 14 ? n.name.slice(0, 13) + "…" : n.name;
+          return (
+            <g key={n.id} transform={`translate(${pos.x},${pos.y})`}>
+              <circle r={18} fill={c.fill} stroke={c.stroke} strokeWidth={1.5} />
+              <text y={32} textAnchor="middle" fontSize={9} fill={c.text} fontWeight={500}>{label}</text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
 export default function KnowledgeBase() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -154,6 +247,9 @@ export default function KnowledgeBase() {
     Array<{ id: string; content: string; createdAt: string }>
   >([]);
   const [reindexing, setReindexing] = useState(false);
+  const [graphMode, setGraphMode] = useState(false);
+  const [graphData, setGraphData] = useState<GraphData | null>(null);
+  const [graphLoading, setGraphLoading] = useState(false);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -491,6 +587,25 @@ export default function KnowledgeBase() {
     };
   }, [activeChip, debouncedSearch, loadKnowledge, tenantId]);
 
+  // Load org graph when user switches to graph mode
+  useEffect(() => {
+    if (!graphMode || !tenantId || graphData) return;
+    let active = true;
+    setGraphLoading(true);
+    void supabase.rpc("get_entity_relationship_graph", { p_tenant_id: tenantId }).then(({ data, error }) => {
+      if (!active) return;
+      if (!error && data && typeof data === "object") {
+        const raw = data as Record<string, unknown>;
+        setGraphData({
+          nodes: Array.isArray(raw.nodes) ? (raw.nodes as GraphNode[]) : [],
+          edges: Array.isArray(raw.edges) ? (raw.edges as GraphEdge[]) : [],
+        });
+      }
+      setGraphLoading(false);
+    }).catch(() => { if (active) setGraphLoading(false); });
+    return () => { active = false; };
+  }, [graphMode, tenantId, graphData]);
+
   const handleReindex = async () => {
     if (!tenantId || reindexing) return;
     setReindexing(true);
@@ -573,15 +688,15 @@ export default function KnowledgeBase() {
             )}
           </div>
 
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {CHIP_OPTIONS.map((chip) => (
               <button
                 key={chip.value}
                 type="button"
-                onClick={() => setActiveChip(chip.value)}
+                onClick={() => { setActiveChip(chip.value); setGraphMode(false); }}
                 className={cn(
                   "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
-                  activeChip === chip.value
+                  !graphMode && activeChip === chip.value
                     ? "border-violet-500 bg-violet-100 text-violet-700"
                     : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100",
                 )}
@@ -589,13 +704,33 @@ export default function KnowledgeBase() {
                 {chip.label}
               </button>
             ))}
+            <div className="ml-auto flex rounded-lg border border-slate-200 bg-white p-0.5">
+              <button
+                type="button"
+                onClick={() => setGraphMode(false)}
+                className={cn("rounded-md px-2.5 py-1 text-xs font-medium transition-colors flex items-center gap-1.5",
+                  !graphMode ? "bg-slate-900 text-white" : "text-slate-600 hover:text-slate-900")}
+              >
+                <LayoutList className="h-3.5 w-3.5" /> List
+              </button>
+              <button
+                type="button"
+                onClick={() => setGraphMode(true)}
+                className={cn("rounded-md px-2.5 py-1 text-xs font-medium transition-colors flex items-center gap-1.5",
+                  graphMode ? "bg-slate-900 text-white" : "text-slate-600 hover:text-slate-900")}
+              >
+                <Network className="h-3.5 w-3.5" /> Graph
+              </button>
+            </div>
           </div>
         </div>
       </section>
 
       <section className="grid gap-6 xl:grid-cols-[1fr_320px]">
         <div>
-          {initialLoading ? (
+          {graphMode ? (
+            <OrgGraph data={graphData} loading={graphLoading} />
+          ) : initialLoading ? (
             <div className="grid gap-4 sm:grid-cols-2">
               {Array.from({ length: 6 }).map((_, index) => (
                 <article

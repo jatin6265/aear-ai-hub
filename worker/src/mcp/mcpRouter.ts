@@ -2,6 +2,9 @@ import { getMcpRegistry } from './mcpRegistry';
 import { getGovernanceMiddleware } from '../governance/governanceMiddleware';
 import { getSupabaseService } from '../lib/supabase';
 
+const MCP_CALL_TIMEOUT_MS = Number(process.env.MCP_CALL_TIMEOUT_MS ?? 30_000);
+const MCP_LIST_TIMEOUT_MS = Number(process.env.MCP_LIST_TIMEOUT_MS ?? 10_000);
+
 export type McpToolCall = {
   toolName: string;
   serverId?: string;
@@ -85,19 +88,27 @@ export class McpRouter {
         };
       }
 
-      const response = await fetch(`${server.url}/tools/call`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(server.auth_config.token
-            ? { Authorization: `Bearer ${server.auth_config.token}` }
-            : {}),
-        },
-        body: JSON.stringify({
-          name: call.toolName,
-          arguments: call.params,
-        }),
-      });
+      const callController = new AbortController();
+      const callTimeout = setTimeout(() => callController.abort(), MCP_CALL_TIMEOUT_MS);
+      let response: Response;
+      try {
+        response = await fetch(`${server.url}/tools/call`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(server.auth_config.token
+              ? { Authorization: `Bearer ${server.auth_config.token}` }
+              : {}),
+          },
+          body: JSON.stringify({
+            name: call.toolName,
+            arguments: call.params,
+          }),
+          signal: callController.signal,
+        });
+      } finally {
+        clearTimeout(callTimeout);
+      }
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -179,14 +190,21 @@ export class McpRouter {
   private async listToolsFromServer(
     server: { url: string; auth_config: Record<string, unknown> }
   ): Promise<Array<RemoteTool>> {
-    const response = await fetch(`${server.url}/tools/list`, {
-      headers: server.auth_config.token
-        ? { Authorization: `Bearer ${server.auth_config.token}` }
-        : {},
-    });
-    if (!response.ok) return [];
-    const data = await response.json() as { tools?: Array<RemoteTool> };
-    return (data.tools ?? []).filter((tool) => String(tool?.name ?? '').trim().length > 0);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), MCP_LIST_TIMEOUT_MS);
+    try {
+      const response = await fetch(`${server.url}/tools/list`, {
+        headers: server.auth_config.token
+          ? { Authorization: `Bearer ${server.auth_config.token}` }
+          : {},
+        signal: controller.signal,
+      });
+      if (!response.ok) return [];
+      const data = await response.json() as { tools?: Array<RemoteTool> };
+      return (data.tools ?? []).filter((tool) => String(tool?.name ?? '').trim().length > 0);
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   private validateToolResult(call: McpToolCall, tool: RemoteTool, rawResult: unknown): unknown {
@@ -223,14 +241,17 @@ export class McpRouter {
     const supabase = getSupabaseService();
     await supabase.getClient().from('audit_logs').insert({
       tenant_id: call.tenantId,
-      actor_id: call.userId,
-      action_type: 'mcp_tool_call',
-      resource_type: 'mcp_tool',
-      resource_id: call.serverId ?? null,
-      payload: { tool_name: call.toolName, params: call.params },
-      outcome,
-      result: result ?? null,
-      error_message: error ?? null,
+      user_id: call.userId,
+      action: 'mcp.tool_call',
+      resource: call.toolName,
+      risk_level: 'medium',
+      status: outcome,
+      details: {
+        server_id: call.serverId ?? null,
+        params: call.params,
+        result: result ?? null,
+        error: error ?? null,
+      },
     });
   }
 }

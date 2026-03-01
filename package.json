@@ -15,10 +15,12 @@
     "backend:verify-worker-drift": "bash scripts/verify-worker-runtime-drift.sh",
     "backend:verify-worker-deploy": "bash scripts/verify-worker-deploy-readiness.sh",
     "backend:verify-runtime": "bash scripts/verify-runtime-wiring.sh",
+    "backend:smoke-openclaw-bridge": "node scripts/test-openclaw-bridge.mjs",
     "backend:deploy": "bash scripts/deploy-backend.sh",
     "setup:e2e": "bash scripts/setup-e2e.sh --no-deploy",
     "worker:run": "node worker/connector-worker.mjs",
     "worker:build": "cd worker && npm run build",
+    "worker:build-and-run": "npm run worker:build && node worker/connector-worker.mjs",
     "worker:dev": "cd worker && npm run dev"
   },
   "dependencies": {

@@ -1,14 +1,20 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { Check, CheckCircle2 } from "lucide-react";
+import { Check, CheckCircle2, ArrowRight } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { supabase } from "@/integrations/supabase/client";
 import { invokeEdge } from "@/lib/edge-invoke";
 import { cn } from "@/lib/utils";
+
+// ─── Brand palette (sourced from OpsAI_Logo_01.svg) ──────────────────────────
+const NAVY     = '#12294A';
+const TEAL     = '#4FDEAA';
+const NAVY2    = '#0d1f38';
+const TEAL_DIM = '#0e9065';
+// ─────────────────────────────────────────────────────────────────────────────
 
 type BillingInterval = "monthly" | "annual";
 type PlanCode = "starter" | "pro" | "business" | "enterprise";
@@ -154,18 +160,45 @@ function normalizePayload(value: unknown): PricingPayload {
 function renderComparisonValue(value: string) {
   const normalized = value.trim().toLowerCase();
   if (normalized === "yes" || normalized === "included" || normalized === "true") {
-    return <CheckCircle2 className="mx-auto h-4 w-4 text-emerald-600" />;
+    return <CheckCircle2 className="mx-auto h-4 w-4" style={{ color: TEAL_DIM }} />;
   }
   if (normalized === "no" || normalized === "false" || normalized === "-") {
-    return <span className="text-slate-400">-</span>;
+    return <span style={{ color: 'rgba(18,41,74,0.25)' }}>—</span>;
   }
-  return <span className="text-xs text-slate-700">{value}</span>;
+  return <span className="text-xs" style={{ color: NAVY }}>{value}</span>;
 }
 
-function badgeClass(tone: PricingPlan["badgeTone"]) {
-  if (tone === "highlight") return "border-0 bg-violet-100 text-violet-800";
-  if (tone === "popular") return "border-0 bg-blue-100 text-blue-800";
-  return "border-0 bg-slate-200 text-slate-700";
+function badgeStyle(tone: PricingPlan["badgeTone"]): React.CSSProperties {
+  if (tone === "popular" || tone === "highlight") return { background: TEAL, color: NAVY, border: 0, fontWeight: 600 };
+  return { background: 'rgba(18,41,74,0.08)', color: NAVY, border: 0 };
+}
+
+/**
+ * OpsAI_Logo_01.svg inlined as a React component.
+ * Uses a unique clipPath id so it doesn't conflict with LandingPage.
+ */
+function OpsAILogo({ height = 36, opsColor = '#ffffff' }: { height?: number; opsColor?: string }) {
+  return (
+    <svg
+      viewBox="90 95 595 160"
+      height={height}
+      style={{ display: 'block', overflow: 'visible' }}
+      aria-label="OpsAI"
+    >
+      <defs>
+        <clipPath id="pricing-logo-teal-clip">
+          <rect x="215" y="0" width="200" height="185" />
+        </clipPath>
+      </defs>
+      <path d="M 200 100 A 100 100 0 1 0 300 200 L 260 200 A 60 60 0 1 1 200 140 Z" fill={opsColor} />
+      <circle cx="200" cy="200" r="67.5" fill="none" stroke="#4FDEAA" strokeWidth="15" clipPath="url(#pricing-logo-teal-clip)" />
+      <circle cx="200" cy="200" r="92.5" fill="none" stroke="#4FDEAA" strokeWidth="15" clipPath="url(#pricing-logo-teal-clip)" />
+      <text x="340" y="242" fontFamily="Montserrat, Inter, system-ui, sans-serif" fontWeight="700" fontSize="130">
+        <tspan fill={opsColor}>Ops</tspan>
+        <tspan fill="#4FDEAA">AI</tspan>
+      </text>
+    </svg>
+  );
 }
 
 export default function PricingPage() {
@@ -180,14 +213,10 @@ export default function PricingPage() {
       setLoading(true);
       try {
         const { data, error } = await invokeEdge("public-pricing", {
-          body: {
-            billingInterval: nextInterval,
-          },
+          body: { billingInterval: nextInterval },
           requireAuth: false,
         });
-
         if (error) throw error;
-
         const nextPayload = normalizePayload((asRecord(data)?.payload as unknown) ?? null);
         setPayload(nextPayload);
       } catch (error) {
@@ -222,120 +251,232 @@ export default function PricingPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
-      <div className="mx-auto max-w-7xl px-6 py-14 lg:py-20">
-        <header className="text-center">
-          <h1 className="text-4xl font-extrabold tracking-tight sm:text-5xl">Simple, transparent pricing</h1>
-          <p className="mt-3 text-sm text-slate-600 sm:text-base">Billed monthly. Annual saves 20%.</p>
+    <div style={{ fontFamily: 'Inter, system-ui, sans-serif', minHeight: '100vh', background: '#F0F9F5' }}>
 
-          <div className="mt-6 inline-flex rounded-full border border-slate-200 bg-white p-1 shadow-sm">
+      {/* ── Nav ─────────────────────────────────────────────────────────────── */}
+      <nav
+        className="fixed top-0 left-0 right-0 z-50 border-b"
+        style={{
+          background: 'rgba(18, 41, 74, 0.72)',
+          backdropFilter: 'blur(20px) saturate(180%)',
+          WebkitBackdropFilter: 'blur(20px) saturate(180%)',
+          borderColor: 'rgba(79,222,170,0.2)',
+          boxShadow: '0 1px 40px rgba(18,41,74,0.6), inset 0 -1px 0 rgba(79,222,170,0.12)',
+        }}
+      >
+        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+          <Link to="/" style={{ display: 'flex', alignItems: 'center' }}>
+            <OpsAILogo height={34} opsColor="#ffffff" />
+          </Link>
+
+          <div className="hidden md:flex items-center gap-8 text-sm" style={{ color: 'rgba(255,255,255,0.65)' }}>
+            <Link to="/#features" className="transition-colors hover:text-white">Features</Link>
+            <Link to="/#how-it-works" className="transition-colors hover:text-white">How it Works</Link>
+            <Link to="/pricing" style={{ color: TEAL }}>Pricing</Link>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <Link to="/auth/login">
+              <Button variant="ghost" size="sm"
+                style={{ color: 'rgba(255,255,255,0.7)' }}
+                className="hover:text-white hover:bg-white/5">
+                Sign In
+              </Button>
+            </Link>
+            <Link to="/auth/signup">
+              <Button size="sm"
+                style={{ background: TEAL, color: NAVY, fontWeight: 600, border: 'none' }}
+                className="hover:opacity-90">
+                Get Started
+              </Button>
+            </Link>
+          </div>
+        </div>
+      </nav>
+
+      {/* ── Hero / Header ───────────────────────────────────────────────────── */}
+      <div className="pt-16" style={{ background: NAVY }}>
+        <div className="max-w-7xl mx-auto px-6 py-20 text-center relative overflow-hidden">
+          {/* Subtle glow */}
+          <div className="absolute inset-0 pointer-events-none"
+            style={{ background: `radial-gradient(ellipse at 50% 120%, ${TEAL}18, transparent 60%)` }} />
+
+          <p className="relative text-sm font-semibold uppercase tracking-widest mb-4" style={{ color: TEAL }}>
+            Pricing
+          </p>
+          <h1 className="relative text-4xl font-extrabold tracking-tight sm:text-5xl" style={{ color: '#ffffff' }}>
+            Simple, transparent pricing
+          </h1>
+          <p className="relative mt-3 text-base" style={{ color: 'rgba(255,255,255,0.6)' }}>
+            Start free. Scale as you grow. No hidden fees.
+          </p>
+
+          {/* Billing toggle */}
+          <div className="relative mt-8 inline-flex rounded-full p-1"
+            style={{
+              background: 'rgba(255,255,255,0.07)',
+              border: '1px solid rgba(79,222,170,0.25)',
+            }}>
             <button
               type="button"
               onClick={() => onIntervalChange("monthly")}
-              className={cn(
-                "rounded-full px-5 py-2 text-sm font-medium transition",
-                interval === "monthly" ? "bg-violet-600 text-white" : "text-slate-600 hover:bg-slate-100",
-              )}
+              className="rounded-full px-6 py-2 text-sm font-medium transition-all"
+              style={interval === "monthly"
+                ? { background: TEAL, color: NAVY }
+                : { color: 'rgba(255,255,255,0.6)', background: 'transparent' }}
             >
               Monthly
             </button>
             <button
               type="button"
               onClick={() => onIntervalChange("annual")}
-              className={cn(
-                "rounded-full px-5 py-2 text-sm font-medium transition",
-                interval === "annual" ? "bg-violet-600 text-white" : "text-slate-600 hover:bg-slate-100",
-              )}
+              className="rounded-full px-6 py-2 text-sm font-medium transition-all"
+              style={interval === "annual"
+                ? { background: TEAL, color: NAVY }
+                : { color: 'rgba(255,255,255,0.6)', background: 'transparent' }}
             >
-              Annual
+              Annual{" "}
+              <span className="ml-1 text-xs font-semibold" style={{ color: TEAL }}>
+                Save 20%
+              </span>
             </button>
           </div>
-        </header>
+        </div>
+      </div>
 
-        <section className="mt-12 grid gap-5 lg:grid-cols-4">
+      {/* ── Content ─────────────────────────────────────────────────────────── */}
+      <div className="max-w-7xl mx-auto px-6 pb-24">
+
+        {/* ── Plan cards ──────────────────────────────────────────────────── */}
+        <section className="-mt-6 grid gap-5 lg:grid-cols-4">
           {loading
-            ? Array.from({ length: 4 }).map((_, index) => <Skeleton key={`plan-skeleton-${index}`} className="h-[470px] rounded-2xl" />)
+            ? Array.from({ length: 4 }).map((_, index) => (
+                <Skeleton key={`plan-skeleton-${index}`} className="h-[470px] rounded-2xl" />
+              ))
             : payload.plans.map((plan) => (
                 <article
                   key={plan.code}
-                  className={cn(
-                    "flex h-full flex-col rounded-2xl border bg-white p-6 shadow-sm",
-                    plan.highlighted ? "border-violet-500 ring-1 ring-violet-200" : "border-slate-200",
-                  )}
+                  className="flex h-full flex-col rounded-2xl bg-white p-6"
+                  style={{
+                    border: `1.5px solid ${plan.highlighted ? TEAL : '#ddeee8'}`,
+                    boxShadow: plan.highlighted
+                      ? `0 0 40px ${TEAL}22, 0 8px 32px rgba(0,0,0,0.08)`
+                      : '0 4px 16px rgba(18,41,74,0.06)',
+                  }}
                 >
                   <div className="mb-4 flex min-h-8 items-center">
-                    {plan.badge ? <Badge className={badgeClass(plan.badgeTone)}>{plan.badge}</Badge> : null}
+                    {plan.badge ? (
+                      <Badge className="border-0 text-xs font-semibold" style={badgeStyle(plan.badgeTone)}>
+                        {plan.badge}
+                      </Badge>
+                    ) : null}
                   </div>
 
-                  <h2 className="text-xl font-bold text-slate-900">{plan.name.toUpperCase()}</h2>
+                  <h2 className="text-xl font-bold" style={{ color: NAVY }}>{plan.name.toUpperCase()}</h2>
+
                   <div className="mt-3 flex items-end gap-1">
-                    <span className="text-4xl font-extrabold tracking-tight">{plan.priceDisplay}</span>
-                    {plan.periodLabel ? <span className="pb-1 text-xs text-slate-500">{plan.periodLabel}</span> : null}
+                    <span className="text-4xl font-extrabold tracking-tight" style={{ color: NAVY }}>
+                      {plan.priceDisplay}
+                    </span>
+                    {plan.periodLabel ? (
+                      <span className="pb-1 text-xs" style={{ color: '#4b6280' }}>{plan.periodLabel}</span>
+                    ) : null}
                   </div>
-                  {plan.description ? <p className="mt-2 min-h-10 text-sm text-slate-600">{plan.description}</p> : <div className="mt-2 min-h-10" />}
+
+                  {plan.description ? (
+                    <p className="mt-2 min-h-10 text-sm" style={{ color: '#4b6280' }}>{plan.description}</p>
+                  ) : (
+                    <div className="mt-2 min-h-10" />
+                  )}
 
                   <ul className="mt-4 flex-1 space-y-2.5">
                     {plan.features.map((feature) => (
-                      <li key={`${plan.code}-${feature}`} className="flex items-start gap-2 text-sm text-slate-700">
-                        <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                      <li key={`${plan.code}-${feature}`} className="flex items-start gap-2 text-sm" style={{ color: '#334e68' }}>
+                        <Check className="mt-0.5 h-4 w-4 shrink-0" style={{ color: TEAL_DIM }} />
                         <span>{feature}</span>
                       </li>
                     ))}
                   </ul>
 
                   {plan.code === "enterprise" ? (
-                    <Button variant="outline" className="mt-6 border-slate-300" asChild>
-                      <a href="mailto:sales@opsai.ai">Contact Sales</a>
-                    </Button>
+                    <a
+                      href="mailto:sales@opsai.ai"
+                      className="mt-6 flex items-center justify-center rounded-lg px-4 py-2.5 text-sm font-semibold transition hover:opacity-80"
+                      style={{ border: `1.5px solid ${NAVY}33`, color: NAVY, background: 'transparent' }}
+                    >
+                      Contact Sales
+                    </a>
                   ) : (
-                    <Button className="mt-6 bg-violet-600 hover:bg-violet-700" asChild>
-                      <Link to="/auth/signup">Start Free Trial</Link>
-                    </Button>
+                    <Link to="/auth/signup" className="mt-6 block">
+                      <button
+                        className="w-full rounded-lg px-4 py-2.5 text-sm font-semibold transition hover:opacity-90"
+                        style={plan.highlighted
+                          ? { background: TEAL, color: NAVY, border: 'none', boxShadow: `0 0 20px ${TEAL}44` }
+                          : { background: 'transparent', color: NAVY, border: `1.5px solid ${NAVY}33` }}
+                      >
+                        Start Free Trial
+                      </button>
+                    </Link>
                   )}
                 </article>
               ))}
         </section>
 
-        <section className="mt-14 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
-          <h3 className="text-2xl font-bold tracking-tight">Feature Comparison</h3>
-          <p className="mt-1 text-sm text-slate-600">Compare capabilities across plans.</p>
+        {/* ── Feature comparison ──────────────────────────────────────────── */}
+        <section className="mt-20 rounded-2xl overflow-hidden shadow-sm"
+          style={{ border: `1px solid #ddeee8`, background: '#ffffff' }}>
+          <div className="px-6 pt-6 pb-5" style={{ borderBottom: '1px solid #ddeee8' }}>
+            <h3 className="text-2xl font-bold tracking-tight" style={{ color: NAVY }}>Feature Comparison</h3>
+            <p className="mt-1 text-sm" style={{ color: '#4b6280' }}>Compare capabilities across plans.</p>
+          </div>
 
-          <div className="mt-5 overflow-x-auto">
+          <div className="overflow-x-auto">
             <table className="w-full min-w-[920px] border-collapse text-left">
               <thead>
-                <tr className="border-b border-slate-200">
-                  <th className="sticky left-0 z-10 bg-white px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Feature</th>
-                  <th className="px-3 py-3 text-center text-xs font-semibold uppercase tracking-wide text-slate-500">Starter</th>
-                  <th className="px-3 py-3 text-center text-xs font-semibold uppercase tracking-wide text-slate-500">Pro</th>
-                  <th className="px-3 py-3 text-center text-xs font-semibold uppercase tracking-wide text-slate-500">Business</th>
-                  <th className="px-3 py-3 text-center text-xs font-semibold uppercase tracking-wide text-slate-500">Enterprise</th>
+                <tr style={{ background: '#F0F9F5', borderBottom: `2px solid #ddeee8` }}>
+                  <th className="sticky left-0 z-10 px-5 py-4 text-xs font-semibold uppercase tracking-wide"
+                    style={{ background: '#F0F9F5', color: NAVY }}>
+                    Feature
+                  </th>
+                  {['Starter', 'Pro', 'Business', 'Enterprise'].map((col) => (
+                    <th key={col} className="px-4 py-4 text-center text-xs font-semibold uppercase tracking-wide"
+                      style={{ color: NAVY }}>
+                      {col}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
                 {loading
                   ? Array.from({ length: 16 }).map((_, index) => (
-                      <tr key={`comparison-skeleton-${index}`} className="border-b border-slate-100">
-                        <td className="px-3 py-3"><Skeleton className="h-4 w-40" /></td>
-                        <td className="px-3 py-3"><Skeleton className="mx-auto h-4 w-20" /></td>
-                        <td className="px-3 py-3"><Skeleton className="mx-auto h-4 w-20" /></td>
-                        <td className="px-3 py-3"><Skeleton className="mx-auto h-4 w-20" /></td>
-                        <td className="px-3 py-3"><Skeleton className="mx-auto h-4 w-20" /></td>
+                      <tr key={`comparison-skeleton-${index}`} style={{ borderBottom: '1px solid #f0f4f8' }}>
+                        <td className="px-5 py-3"><Skeleton className="h-4 w-40" /></td>
+                        <td className="px-4 py-3"><Skeleton className="mx-auto h-4 w-20" /></td>
+                        <td className="px-4 py-3"><Skeleton className="mx-auto h-4 w-20" /></td>
+                        <td className="px-4 py-3"><Skeleton className="mx-auto h-4 w-20" /></td>
+                        <td className="px-4 py-3"><Skeleton className="mx-auto h-4 w-20" /></td>
                       </tr>
                     ))
                   : groupedRows.map(([category, rows]) => (
                       <Fragment key={`cat-${category}`}>
-                        <tr className="border-y border-slate-200 bg-slate-50">
-                          <td colSpan={5} className="px-3 py-2.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        <tr style={{ background: '#F7FBF9', borderTop: '1px solid #ddeee8', borderBottom: '1px solid #ddeee8' }}>
+                          <td colSpan={5} className="px-5 py-2.5 text-xs font-semibold uppercase tracking-wide"
+                            style={{ color: TEAL_DIM }}>
                             {category}
                           </td>
                         </tr>
                         {rows.map((row) => (
-                          <tr key={row.featureKey} className="border-b border-slate-100">
-                            <td className="sticky left-0 bg-white px-3 py-3 text-sm text-slate-800">{row.featureName}</td>
-                            <td className="px-3 py-3 text-center">{renderComparisonValue(row.starter)}</td>
-                            <td className="px-3 py-3 text-center">{renderComparisonValue(row.pro)}</td>
-                            <td className="px-3 py-3 text-center">{renderComparisonValue(row.business)}</td>
-                            <td className="px-3 py-3 text-center">{renderComparisonValue(row.enterprise)}</td>
+                          <tr key={row.featureKey} className="transition-colors"
+                            style={{ borderBottom: '1px solid #f0f4f8' }}
+                            onMouseEnter={(e) => (e.currentTarget.style.background = '#F7FBF9')}
+                            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}>
+                            <td className="sticky left-0 bg-white px-5 py-3 text-sm" style={{ color: NAVY }}>
+                              {row.featureName}
+                            </td>
+                            <td className="px-4 py-3 text-center">{renderComparisonValue(row.starter)}</td>
+                            <td className="px-4 py-3 text-center">{renderComparisonValue(row.pro)}</td>
+                            <td className="px-4 py-3 text-center">{renderComparisonValue(row.business)}</td>
+                            <td className="px-4 py-3 text-center">{renderComparisonValue(row.enterprise)}</td>
                           </tr>
                         ))}
                       </Fragment>
@@ -345,28 +486,85 @@ export default function PricingPage() {
           </div>
         </section>
 
-        <section className="mx-auto mt-14 max-w-3xl rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <h3 className="text-2xl font-bold tracking-tight">Frequently Asked Questions</h3>
-          <p className="mt-1 text-sm text-slate-600">Answers to common pricing and billing questions.</p>
+        {/* ── FAQ ─────────────────────────────────────────────────────────── */}
+        <section className="mx-auto mt-16 max-w-3xl rounded-2xl p-8 shadow-sm"
+          style={{ background: '#ffffff', border: '1px solid #ddeee8' }}>
+          <h3 className="text-2xl font-bold tracking-tight" style={{ color: NAVY }}>
+            Frequently Asked Questions
+          </h3>
+          <p className="mt-1 text-sm" style={{ color: '#4b6280' }}>
+            Answers to common pricing and billing questions.
+          </p>
 
-          <Accordion type="single" collapsible className="mt-4">
+          <Accordion type="single" collapsible className="mt-6">
             {loading
               ? Array.from({ length: 6 }).map((_, index) => (
-                  <div key={`faq-skeleton-${index}`} className="border-b border-slate-200 py-4">
+                  <div key={`faq-skeleton-${index}`} className="border-b py-4" style={{ borderColor: '#ddeee8' }}>
                     <Skeleton className="h-4 w-[75%]" />
                   </div>
                 ))
               : payload.faq.map((item, index) => (
-                  <AccordionItem key={`${item.question}-${index}`} value={`faq-${index}`}>
-                    <AccordionTrigger className="text-left text-sm font-semibold text-slate-800 no-underline hover:no-underline">
+                  <AccordionItem
+                    key={`${item.question}-${index}`}
+                    value={`faq-${index}`}
+                    style={{ borderColor: '#ddeee8' }}
+                  >
+                    <AccordionTrigger
+                      className="text-left text-sm font-semibold no-underline hover:no-underline"
+                      style={{ color: NAVY }}
+                    >
                       {item.question}
                     </AccordionTrigger>
-                    <AccordionContent className="text-sm leading-relaxed text-slate-600">{item.answer}</AccordionContent>
+                    <AccordionContent className="text-sm leading-relaxed" style={{ color: '#4b6280' }}>
+                      {item.answer}
+                    </AccordionContent>
                   </AccordionItem>
                 ))}
           </Accordion>
         </section>
+
+        {/* ── CTA strip ───────────────────────────────────────────────────── */}
+        <section className="mt-16 rounded-2xl p-14 text-center relative overflow-hidden"
+          style={{ background: NAVY }}>
+          <div className="absolute inset-0 pointer-events-none"
+            style={{ background: `radial-gradient(ellipse at 50% 0%, ${TEAL}18, transparent 65%)` }} />
+          <h2 className="relative text-2xl sm:text-3xl font-bold mb-4" style={{ color: '#ffffff' }}>
+            Ready to automate your enterprise?
+          </h2>
+          <p className="relative text-base mb-8" style={{ color: 'rgba(255,255,255,0.6)' }}>
+            Join hundreds of teams using OpsAI to connect, govern, and execute with AI.
+          </p>
+          <Link to="/auth/signup">
+            <button
+              className="relative inline-flex items-center gap-2 px-8 py-3 rounded-lg font-semibold text-base transition hover:opacity-90"
+              style={{
+                background: TEAL,
+                color: NAVY,
+                border: 'none',
+                boxShadow: `0 0 40px ${TEAL}44`,
+              }}
+            >
+              Start Free Trial <ArrowRight className="w-4 h-4" />
+            </button>
+          </Link>
+        </section>
       </div>
+
+      {/* ── Footer ──────────────────────────────────────────────────────────── */}
+      <footer style={{ background: NAVY2, borderTop: '1px solid rgba(79,222,170,0.1)' }} className="py-10">
+        <div className="max-w-7xl mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div style={{ display: 'flex', alignItems: 'center' }}>
+            <OpsAILogo height={28} opsColor="#ffffff" />
+          </div>
+          <p className="text-xs" style={{ color: 'rgba(255,255,255,0.3)' }}>
+            © 2026 OpsAI. All rights reserved.
+          </p>
+          <div className="flex gap-6 text-xs" style={{ color: 'rgba(255,255,255,0.45)' }}>
+            <Link to="/legal/privacy" className="hover:text-white transition-colors">Privacy</Link>
+            <Link to="/legal/terms" className="hover:text-white transition-colors">Terms</Link>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }

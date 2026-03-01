@@ -72,21 +72,9 @@ function hasProjectTokenMismatch(token: string) {
   const payload = decodeJwtPayload(token);
   const issuer = typeof payload?.iss === "string" ? payload.iss : "";
   const expected = `${import.meta.env.VITE_SUPABASE_URL}/auth/v1`;
-  if (!issuer || !expected) return false;
+  // Only flag a mismatch if both values are non-empty and they genuinely disagree
+  if (!issuer || !expected || expected === "/auth/v1") return false;
   return !issuer.startsWith(expected);
-}
-
-function isHardRefreshFailure(error: unknown) {
-  if (!error || typeof error !== "object") return false;
-  const status = Number((error as { status?: unknown })?.status ?? 0);
-  const message = String((error as { message?: unknown })?.message ?? "").toLowerCase();
-  if (status === 401) return true;
-  return (
-    message.includes("invalid refresh token") ||
-    message.includes("refresh token not found") ||
-    message.includes("token has expired") ||
-    message.includes("jwt expired")
-  );
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -99,9 +87,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!activeUser) return;
     await supabase
       .from("profiles")
-      .update({
-        last_active_at: new Date().toISOString(),
-      })
+      .update({ last_active_at: new Date().toISOString() })
       .eq("id", activeUser.id);
   }, []);
 
@@ -114,70 +100,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [touchLastActive],
   );
 
-  const resolveValidSession = useCallback(
-    async (candidateSession: Session | null, allowRefresh = true) => {
-      if (!candidateSession) {
-        applySession(null, null);
-        return;
-      }
-
-      let activeSession: Session | null = candidateSession;
-      if (candidateSession.access_token && hasProjectTokenMismatch(candidateSession.access_token)) {
-        await supabase.auth.signOut({ scope: "local" });
-        applySession(null, null);
-        return;
-      }
-      const tokenExpiresSoon =
-        !candidateSession.expires_at || candidateSession.expires_at * 1000 <= Date.now() + 60_000;
-      if (allowRefresh && tokenExpiresSoon) {
-        const refreshed = await supabase.auth.refreshSession();
-        if (isHardRefreshFailure(refreshed.error)) {
-          await supabase.auth.signOut({ scope: "local" });
-          applySession(null, null);
-          return;
-        }
-        activeSession = refreshed.data.session ?? null;
-      }
-
-      if (!activeSession) {
-        applySession(null, null);
-        return;
-      }
-      if (activeSession.access_token && hasProjectTokenMismatch(activeSession.access_token)) {
-        await supabase.auth.signOut({ scope: "local" });
-        applySession(null, null);
-        return;
-      }
-
-      applySession(activeSession, activeSession.user ?? candidateSession.user ?? null);
-
-      const userResult = await supabase.auth.getUser(activeSession.access_token);
-      if (userResult.error || !userResult.data.user) {
-        const status = (userResult.error as { status?: number } | null | undefined)?.status;
-        const message = String(userResult.error?.message ?? "").toLowerCase();
-        const definitelyExpired =
-          message.includes("jwt expired") ||
-          message.includes("token is expired") ||
-          message.includes("invalid refresh token") ||
-          message.includes("refresh token");
-        const invalidSession =
-          definitelyExpired ||
-          (status === 401 &&
-            (message.includes("invalid jwt") || message.includes("expired")));
-
-        if (invalidSession) {
-          await supabase.auth.signOut({ scope: "local" });
-          applySession(null, null);
-        }
-        // Keep existing session state for transient network issues.
-        return;
-      }
-
-      applySession(activeSession, userResult.data.user);
-    },
-    [applySession],
-  );
-
+  // ─── Auth state listener ──────────────────────────────────────────────────
+  // We trust Supabase's own session management entirely.
+  // autoRefreshToken:true in the client config handles token renewal.
+  // We only clear the session ourselves when the token is from a different
+  // Supabase project (a stale localStorage entry from a previous environment).
+  // NO extra getUser() network call, NO refreshSession() call — these caused
+  // a race condition that cleared valid sessions milliseconds after login and
+  // made all subsequent Supabase DB queries return 401 "Authentication required".
   useEffect(() => {
     let active = true;
 
@@ -185,29 +115,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       if (!active) return;
+
       if (!nextSession) {
         applySession(null, null);
         setLoading(false);
         return;
       }
+
+      // Guard: stale token from a different Supabase project in localStorage
+      if (nextSession.access_token && hasProjectTokenMismatch(nextSession.access_token)) {
+        void supabase.auth.signOut({ scope: "local" });
+        applySession(null, null);
+        setLoading(false);
+        return;
+      }
+
       applySession(nextSession, nextSession.user ?? null);
       setLoading(false);
-      void resolveValidSession(nextSession, true);
     });
-
-    void (async () => {
-      const { data } = await supabase.auth.getSession();
-      if (!active) return;
-      await resolveValidSession(data.session ?? null, true);
-      if (active) setLoading(false);
-    })();
 
     return () => {
       active = false;
       subscription.unsubscribe();
     };
-  }, [applySession, resolveValidSession]);
+  }, [applySession]);
 
+  // ─── signUp ───────────────────────────────────────────────────────────────
   const signUp = async ({ email, password, fullName, companyName, termsAccepted }: SignUpInput) => {
     const { data, error } = await supabase.auth.signUp({
       email,
@@ -254,29 +187,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   };
 
+  // ─── signIn ───────────────────────────────────────────────────────────────
+  // Deliberately does NOT call ensureUserWorkspace — workspace provisioning
+  // happens lazily in OnboardingGuard and dashboard pages.  Calling it here
+  // was blocking login whenever the RPC was missing or the DB was slow, and
+  // showing "Unable to sign in" even when the user was fully authenticated.
   const signIn = async (email: string, password: string): Promise<SignInResult> => {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) return { error, role: null };
-    if (!data.user) return { error: new Error("No user in session."), role: null };
+    if (!data.user) return { error: new Error("No user returned from sign-in."), role: null };
+
     if (!isUserEmailVerified(data.user)) {
       await supabase.auth.signOut({ scope: "local" });
       return {
-        error: new Error("Email not verified. Please verify your email before signing in."),
+        error: new Error("Email not verified. Please check your inbox and verify before signing in."),
         role: null,
       };
     }
 
-    try {
-      const profile = await ensureUserWorkspace(data.user);
-      return { error: null, role: profile.role };
-    } catch (workspaceError) {
-      return {
-        error: workspaceError instanceof Error ? workspaceError : new Error("Unable to load profile."),
-        role: null,
-      };
-    }
+    // Role is set lazily — return what we know without an extra DB round-trip
+    const role =
+      typeof data.user.user_metadata?.role === "string" ? data.user.user_metadata.role : null;
+    return { error: null, role };
   };
 
+  // ─── signInWithGoogle ─────────────────────────────────────────────────────
   const signInWithGoogle = async () => {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
@@ -287,6 +222,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { error };
   };
 
+  // ─── email helpers ────────────────────────────────────────────────────────
   const resendVerificationEmail = async (email: string) => {
     const { error } = await supabase.auth.resend({
       type: "signup",
@@ -329,19 +265,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signOut,
       emailVerified,
     }),
-    [
-      user,
-      session,
-      loading,
-      signUp,
-      signIn,
-      signInWithGoogle,
-      resendVerificationEmail,
-      sendPasswordResetEmail,
-      updatePassword,
-      signOut,
-      emailVerified,
-    ],
+    [user, session, loading, emailVerified],
   );
 
   return createElement(AuthContext.Provider, { value }, children);

@@ -9,6 +9,7 @@ import {
   Clock3,
   Database,
   MessageSquare,
+  Network,
   NotebookPen,
   Plug,
   Plus,
@@ -18,6 +19,7 @@ import {
   TrendingUp,
   Workflow,
 } from "lucide-react";
+import { invokeEdge } from "@/lib/edge-invoke";
 import { Area, AreaChart, ResponsiveContainer } from "recharts";
 import { format } from "date-fns";
 import { useAuth } from "@/hooks/useAuth";
@@ -269,9 +271,29 @@ function messageDeltaText(today: number, yesterday: number) {
   return `${delta} vs yesterday`;
 }
 
+type CrossRiskDomain = { name: string; riskCount: number; maxSeverity: string };
+type CrossRiskItem   = { title: string; severity: string; domain: string; detectedAt: string };
+type CrossRiskData   = {
+  correlationScore: number;
+  affectedDomains:  number;
+  riskLevel:        string;
+  isCompound:       boolean;
+  domains:          CrossRiskDomain[];
+  topRisks:         CrossRiskItem[];
+};
+
+function riskLevelClass(level: string) {
+  if (level === "critical") return "bg-red-100 text-red-700 border-red-200";
+  if (level === "high")     return "bg-orange-100 text-orange-700 border-orange-200";
+  if (level === "medium")   return "bg-amber-100 text-amber-700 border-amber-200";
+  return "bg-emerald-100 text-emerald-700 border-emerald-200";
+}
+
 export default function Dashboard() {
   const { user } = useAuth();
   const [state, setState] = useState<DashboardState>(INITIAL_STATE);
+  const [crossRisk, setCrossRisk] = useState<CrossRiskData | null>(null);
+  const [crossRiskLoading, setCrossRiskLoading] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -417,7 +439,28 @@ export default function Dashboard() {
     return () => {
       active = false;
     };
-  }, [user]);
+  // Only re-run when the authenticated user changes (not on same-user reference changes from TOKEN_REFRESHED).
+  // The `user` object is stable within the closure; its `.id` is sufficient to detect login/logout.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  // Cross-domain risk correlation — loaded independently so it doesn't block main dashboard
+  useEffect(() => {
+    if (!user) return;
+    let active = true;
+    setCrossRiskLoading(true);
+    void invokeEdge("risk-correlations", { body: {} }).then(({ data, error }) => {
+      if (!active) return;
+      if (!error && data && typeof data === "object" && "correlations" in data) {
+        setCrossRisk(data.correlations as CrossRiskData);
+      }
+      setCrossRiskLoading(false);
+    }).catch(() => {
+      if (active) setCrossRiskLoading(false);
+    });
+    return () => { active = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   const displayName = useMemo(() => {
     const fullName =
@@ -667,6 +710,63 @@ export default function Dashboard() {
           )}
         </article>
       </section>
+
+      {/* Cross-Domain Risk Correlation */}
+      {(crossRiskLoading || (crossRisk && (crossRisk.affectedDomains > 0 || crossRisk.correlationScore > 0))) && (
+        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="mb-4 flex items-center gap-2">
+            <Network className="h-4 w-4 text-violet-600" />
+            <h2 className="text-lg font-semibold text-slate-900">Cross-Domain Risk Correlation</h2>
+            {crossRisk && !crossRiskLoading && (
+              <span className={`ml-auto rounded-full border px-2.5 py-0.5 text-xs font-medium capitalize ${riskLevelClass(crossRisk.riskLevel)}`}>
+                {crossRisk.riskLevel} risk
+              </span>
+            )}
+          </div>
+          {crossRiskLoading ? (
+            <div className="flex gap-4">
+              <Skeleton className="h-16 w-1/3 rounded-lg" />
+              <Skeleton className="h-16 w-1/3 rounded-lg" />
+              <Skeleton className="h-16 w-1/3 rounded-lg" />
+            </div>
+          ) : crossRisk ? (
+            <div className="space-y-4">
+              <div className="grid grid-cols-3 gap-3 text-center">
+                <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                  <p className="text-2xl font-semibold text-slate-900">{crossRisk.correlationScore}</p>
+                  <p className="mt-0.5 text-xs text-slate-500">Compound Score</p>
+                </div>
+                <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                  <p className="text-2xl font-semibold text-slate-900">{crossRisk.affectedDomains}</p>
+                  <p className="mt-0.5 text-xs text-slate-500">Affected Domains</p>
+                </div>
+                <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                  <p className="text-2xl font-semibold text-slate-900">{crossRisk.topRisks.length}</p>
+                  <p className="mt-0.5 text-xs text-slate-500">Active Anomalies</p>
+                </div>
+              </div>
+              {crossRisk.isCompound && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  <AlertTriangle className="mr-1.5 inline h-3.5 w-3.5" />
+                  Compound risk detected across {crossRisk.affectedDomains} domains simultaneously — stronger signal than any single alert.
+                </div>
+              )}
+              {crossRisk.domains.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {crossRisk.domains.map((d) => (
+                    <span key={d.name} className={`rounded-full border px-2.5 py-1 text-xs font-medium ${riskLevelClass(d.maxSeverity)}`}>
+                      {d.name} · {d.riskCount} alert{d.riskCount !== 1 ? "s" : ""}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <Button asChild variant="outline" size="sm" className="w-full">
+                <Link to="/dashboard/insights">View full anomaly feed <ArrowRight className="ml-1.5 h-3.5 w-3.5" /></Link>
+              </Button>
+            </div>
+          ) : null}
+        </section>
+      )}
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-4 flex items-center gap-2">

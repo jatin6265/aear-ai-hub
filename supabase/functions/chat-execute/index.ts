@@ -94,6 +94,9 @@ type ChatExecuteRequest = {
   retryRunId?: string | null;
   retrySql?: string | null;
   retryError?: string | null;
+  agentId?: string | null;
+  connectionId?: string | null;
+  runtimeRunId?: string | null;
 };
 
 type ToolRun = {
@@ -139,11 +142,13 @@ function sanitizeSql(sql: string) {
 }
 
 type AgentCandidate = {
+  id?: string;
   name: string;
   domain: string | null;
   description: string | null;
   config: Record<string, unknown> | null;
   status: string;
+  source_connection_id?: string | null;
 };
 
 function tokenizePrompt(input: string) {
@@ -204,11 +209,433 @@ async function detectAgent(prompt: string, supabase: AuthedSupabase, tenantId: s
   return best?.name ?? candidates[0]?.name ?? "OpsAI Core";
 }
 
+function toObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
+function slugify(value: string) {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+}
+
+async function resolveRuntimeAgent(args: {
+  supabase: AuthedSupabase;
+  tenantId: string;
+  userId: string;
+  prompt: string;
+  preferredAgentId?: string | null;
+}): Promise<{ id: string; name: string; sourceConnectionId: string | null }> {
+  const preferredAgentId = String(args.preferredAgentId ?? "").trim();
+  if (preferredAgentId) {
+    const selected = await args.supabase
+      .from("ai_agents")
+      .select("id, name, source_connection_id")
+      .eq("tenant_id", args.tenantId)
+      .eq("id", preferredAgentId)
+      .neq("status", "disabled")
+      .maybeSingle();
+    if (selected.data?.id) {
+      return {
+        id: String(selected.data.id),
+        name: String((selected.data as Record<string, unknown>).name ?? "OpsAI Core"),
+        sourceConnectionId: selected.data.source_connection_id ? String(selected.data.source_connection_id) : null,
+      };
+    }
+  }
+
+  const selectWithSource = await args.supabase
+    .from("ai_agents")
+    .select("id, name, domain, description, config, status, source_connection_id")
+    .eq("tenant_id", args.tenantId)
+    .neq("status", "disabled")
+    .order("updated_at", { ascending: false })
+    .limit(40);
+
+  let rows = selectWithSource.data as AgentCandidate[] | null;
+  if (selectWithSource.error) {
+    const selectLegacy = await args.supabase
+      .from("ai_agents")
+      .select("id, name, domain, description, config, status")
+      .eq("tenant_id", args.tenantId)
+      .neq("status", "disabled")
+      .order("updated_at", { ascending: false })
+      .limit(40);
+    rows = (selectLegacy.data as AgentCandidate[] | null) ?? [];
+  }
+
+  const candidates = (rows ?? []).filter((row) => String(row.id ?? "").trim().length > 0);
+  if (candidates.length > 0) {
+    const promptTokens = tokenizePrompt(args.prompt);
+    let best = candidates[0];
+    let bestScore = -1;
+    for (const candidate of candidates) {
+      const score = scoreAgentCandidate(promptTokens, candidate);
+      if (score > bestScore) {
+        bestScore = score;
+        best = candidate;
+      }
+    }
+    return {
+      id: String(best.id),
+      name: String(best.name ?? "OpsAI Core"),
+      sourceConnectionId: best.source_connection_id ? String(best.source_connection_id) : null,
+    };
+  }
+
+  const slugBase = slugify("opsai-core") || "opsai-core";
+  const slug = `${slugBase}-${crypto.randomUUID().slice(0, 8)}`;
+  const inserted = await args.supabase
+    .from("ai_agents")
+    .insert({
+      tenant_id: args.tenantId,
+      name: "OpsAI Core",
+      slug,
+      domain: "operations",
+      description: "Auto-provisioned internal operations assistant for governed chat runtime.",
+      status: "ready",
+      created_by: args.userId,
+      config: {
+        model: Deno.env.get("OPENAI_MODEL") ?? "gpt-4.1-mini",
+        rag_enabled: true,
+        system_prompt:
+          "You are OpsAI internal copilot. Answer with grounded, structured, and actionable output. Never fabricate tool output.",
+      },
+    })
+    .select("id, name")
+    .single();
+
+  if (inserted.error || !inserted.data) {
+    throw new Error(inserted.error?.message ?? "Could not provision runtime agent");
+  }
+
+  return {
+    id: String(inserted.data.id),
+    name: String((inserted.data as Record<string, unknown>).name ?? "OpsAI Core"),
+    sourceConnectionId: null,
+  };
+}
+
+async function resolveConnectionForPrompt(args: {
+  supabase: AuthedSupabase;
+  tenantId: string;
+  prompt: string;
+  preferredConnectionId: string | null;
+}): Promise<string | null> {
+  if (args.preferredConnectionId) return args.preferredConnectionId;
+
+  const withArchive = await args.supabase
+    .from("api_connections")
+    .select("id, name, status")
+    .eq("tenant_id", args.tenantId)
+    .eq("is_archived", false)
+    .order("updated_at", { ascending: false })
+    .limit(120);
+  let rows = (withArchive.data ?? []) as Array<Record<string, unknown>>;
+  if (withArchive.error) {
+    const fallback = await args.supabase
+      .from("api_connections")
+      .select("id, name, status")
+      .eq("tenant_id", args.tenantId)
+      .order("updated_at", { ascending: false })
+      .limit(120);
+    rows = (fallback.data ?? []) as Array<Record<string, unknown>>;
+  }
+
+  if (rows.length === 0) return null;
+  const activeRows = rows.filter((row) => String(row.status ?? "").toLowerCase() === "active");
+  const pool = activeRows.length > 0 ? activeRows : rows;
+
+  const prompt = args.prompt.toLowerCase();
+  for (const row of pool) {
+    const name = String(row.name ?? "").trim();
+    if (!name) continue;
+    if (prompt.includes(name.toLowerCase())) {
+      return String(row.id);
+    }
+  }
+
+  return pool[0]?.id ? String(pool[0].id) : null;
+}
+
+async function runQueuedAgentRuntime(args: {
+  supabase: AuthedSupabase;
+  tenantId: string;
+  userId: string;
+  sessionId: string | null;
+  prompt: string;
+  preferredAgentId?: string | null;
+  preferredConnectionId?: string | null;
+}): Promise<{
+  runId: string;
+  jobId: string | null;
+  agentId: string;
+  agentName: string;
+  status: string;
+  assistant: string;
+  approvalRequired: boolean;
+  approvalRef: string | null;
+  toolRuns: ToolRun[];
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    retrievalTokens: number;
+    sqlTokens: number;
+    totalTokens: number;
+  };
+}> {
+  const agent = await resolveRuntimeAgent({
+    supabase: args.supabase,
+    tenantId: args.tenantId,
+    userId: args.userId,
+    prompt: args.prompt,
+    preferredAgentId: args.preferredAgentId,
+  });
+
+  const connectionId = await resolveConnectionForPrompt({
+    supabase: args.supabase,
+    tenantId: args.tenantId,
+    prompt: args.prompt,
+    preferredConnectionId: args.preferredConnectionId ?? agent.sourceConnectionId,
+  });
+
+  const enqueue = await args.supabase.rpc("enqueue_agent_run", {
+    p_agent_id: agent.id,
+    p_input: {
+      prompt: args.prompt,
+      message: args.prompt,
+      query: args.prompt,
+      connectionId,
+      response_format: "structured_v1",
+      response_sections: ["summary", "insights", "anomalies", "next_actions"],
+    },
+    p_session_id: args.sessionId,
+    p_trigger_type: "manual",
+    p_estimated_credits: 14,
+    p_priority: 65,
+    p_idempotency_key: `${args.sessionId ?? "chat"}:${args.userId}:${crypto.randomUUID().slice(0, 8)}`,
+    p_invoked_via: "chat_execute",
+  });
+
+  if (enqueue.error) {
+    throw new Error(enqueue.error.message || "Could not enqueue runtime agent run");
+  }
+
+  const enqueueRow = Array.isArray(enqueue.data) ? (enqueue.data[0] as Record<string, unknown> | undefined) : undefined;
+  const runId = enqueueRow?.run_id ? String(enqueueRow.run_id) : "";
+  const jobId = enqueueRow?.job_id ? String(enqueueRow.job_id) : null;
+  if (!runId) throw new Error("Agent runtime enqueue returned no run id");
+
+  const maxWaitMs = Math.max(2000, Number(Deno.env.get("CHAT_AGENT_RUNTIME_WAIT_MS") ?? 14000));
+  const pollMs = Math.max(400, Number(Deno.env.get("CHAT_AGENT_RUNTIME_POLL_MS") ?? 900));
+  const deadline = Date.now() + maxWaitMs;
+
+  let run: Record<string, unknown> | null = null;
+  while (Date.now() <= deadline) {
+    const { data } = await args.supabase
+      .from("agent_runs")
+      .select("id, status, output, error, input_tokens, output_tokens, tool_calls, pending_approval_id")
+      .eq("id", runId)
+      .maybeSingle();
+    run = data as Record<string, unknown> | null;
+
+    const status = String(run?.status ?? "queued").toLowerCase();
+    if (["success", "failed", "dead_letter", "cancelled", "waiting_approval"].includes(status)) break;
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+
+  if (!run) {
+    const { data } = await args.supabase
+      .from("agent_runs")
+      .select("id, status, output, error, input_tokens, output_tokens, tool_calls, pending_approval_id")
+      .eq("id", runId)
+      .maybeSingle();
+    run = data as Record<string, unknown> | null;
+  }
+
+  const runStatus = String(run?.status ?? "queued").toLowerCase();
+  const output = toObject(run?.output);
+  const assistant = String(
+    output.message ??
+      output.answer ??
+      output.content ??
+      (runStatus === "queued" || runStatus === "running"
+        ? `Your request is running in the governed agent runtime (run: ${runId}).`
+        : run?.error ?? "Agent run completed with no textual output."),
+  ).trim();
+
+  const approvalRef = String(
+    run?.pending_approval_id ??
+      output.approvalId ??
+      output.approvalRef ??
+      "",
+  ).trim() || null;
+
+  const { data: steps } = await args.supabase
+    .from("agent_run_steps")
+    .select("step_type, status, tool_name, latency_ms, data")
+    .eq("run_id", runId)
+    .order("step_index", { ascending: true })
+    .limit(80);
+
+  const toolRuns: ToolRun[] = (steps ?? []).map((step) => {
+    const stepRow = step as Record<string, unknown>;
+    const rawStatus = String(stepRow.status ?? "success").toLowerCase();
+    return {
+      tool: String(stepRow.tool_name ?? stepRow.step_type ?? "runtime_step"),
+      status: rawStatus === "error" ? "error" : rawStatus === "blocked" ? "blocked" : "success",
+      latencyMs: Number.isFinite(Number(stepRow.latency_ms ?? NaN)) ? Number(stepRow.latency_ms) : null,
+      meta: toObject(stepRow.data),
+    };
+  });
+
+  const promptTokens = Math.max(0, Number(run?.input_tokens ?? 0));
+  const completionTokens = Math.max(0, Number(run?.output_tokens ?? 0));
+  const sqlRows = Math.max(0, Number(output.sqlRows ?? output.sql_row_count ?? 0));
+  const retrievalSources = Math.max(0, Number(output.contextSources ?? output.source_count ?? 0));
+
+  return {
+    runId,
+    jobId,
+    agentId: agent.id,
+    agentName: agent.name,
+    status: runStatus,
+    assistant,
+    approvalRequired: runStatus === "waiting_approval" || Boolean(approvalRef),
+    approvalRef,
+    toolRuns,
+    usage: {
+      promptTokens,
+      completionTokens,
+      retrievalTokens: retrievalSources * 120,
+      sqlTokens: sqlRows * 6,
+      totalTokens: promptTokens + completionTokens + retrievalSources * 120 + sqlRows * 6,
+    },
+  };
+}
+
+async function getQueuedRuntimeRunStatus(args: {
+  supabase: AuthedSupabase;
+  tenantId: string;
+  runId: string;
+}): Promise<{
+  runId: string;
+  jobId: string | null;
+  agentId: string | null;
+  agentName: string;
+  sessionId: string | null;
+  status: string;
+  assistant: string;
+  approvalRequired: boolean;
+  approvalRef: string | null;
+  toolRuns: ToolRun[];
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    retrievalTokens: number;
+    sqlTokens: number;
+    totalTokens: number;
+  };
+}> {
+  const { data: run } = await args.supabase
+    .from("agent_runs")
+    .select("id, tenant_id, agent_id, session_id, status, output, error, input_tokens, output_tokens, pending_approval_id")
+    .eq("id", args.runId)
+    .eq("tenant_id", args.tenantId)
+    .maybeSingle();
+
+  if (!run) {
+    throw new Error("Runtime run not found");
+  }
+
+  const runRow = run as Record<string, unknown>;
+  const runStatus = String(runRow.status ?? "queued").toLowerCase();
+  const output = toObject(runRow.output);
+
+  const agentId = String(runRow.agent_id ?? "").trim() || null;
+  let agentName = "OpsAI Core";
+  if (agentId) {
+    const { data: agent } = await args.supabase
+      .from("ai_agents")
+      .select("name")
+      .eq("tenant_id", args.tenantId)
+      .eq("id", agentId)
+      .maybeSingle();
+    if (agent?.name) {
+      agentName = String(agent.name);
+    }
+  }
+
+  const assistant = String(
+    output.message ??
+      output.answer ??
+      output.content ??
+      (runStatus === "queued" || runStatus === "running"
+        ? `Your request is still processing in governed runtime (run: ${args.runId}).`
+        : runRow.error ?? "Agent run completed with no textual output."),
+  ).trim();
+
+  const approvalRef = String(
+    runRow.pending_approval_id ??
+      output.approvalId ??
+      output.approvalRef ??
+      "",
+  ).trim() || null;
+
+  const { data: steps } = await args.supabase
+    .from("agent_run_steps")
+    .select("step_type, status, tool_name, latency_ms, data")
+    .eq("run_id", args.runId)
+    .order("step_index", { ascending: true })
+    .limit(80);
+
+  const toolRuns: ToolRun[] = (steps ?? []).map((step) => {
+    const stepRow = step as Record<string, unknown>;
+    const rawStatus = String(stepRow.status ?? "success").toLowerCase();
+    return {
+      tool: String(stepRow.tool_name ?? stepRow.step_type ?? "runtime_step"),
+      status: rawStatus === "error" ? "error" : rawStatus === "blocked" ? "blocked" : "success",
+      latencyMs: Number.isFinite(Number(stepRow.latency_ms ?? NaN)) ? Number(stepRow.latency_ms) : null,
+      meta: toObject(stepRow.data),
+    };
+  });
+
+  const promptTokens = Math.max(0, Number(runRow.input_tokens ?? 0));
+  const completionTokens = Math.max(0, Number(runRow.output_tokens ?? 0));
+  const sqlRows = Math.max(0, Number(output.sqlRows ?? output.sql_row_count ?? 0));
+  const retrievalSources = Math.max(0, Number(output.contextSources ?? output.source_count ?? 0));
+
+  return {
+    runId: args.runId,
+    jobId: null,
+    agentId,
+    agentName,
+    sessionId: runRow.session_id ? String(runRow.session_id) : null,
+    status: runStatus,
+    assistant,
+    approvalRequired: runStatus === "waiting_approval" || Boolean(approvalRef),
+    approvalRef,
+    toolRuns,
+    usage: {
+      promptTokens,
+      completionTokens,
+      retrievalTokens: retrievalSources * 120,
+      sqlTokens: sqlRows * 6,
+      totalTokens: promptTokens + completionTokens + retrievalSources * 120 + sqlRows * 6,
+    },
+  };
+}
+
 function detectRisk(prompt: string): RiskLevel | null {
   const value = prompt.toLowerCase();
+  if (/^\s*(any\s+)?updates?\??\s*$/.test(value) || /^\s*(status|progress)\??\s*$/.test(value)) return "LOW";
   if (/(drop|delete|remove|shutdown|terminate|wipe|truncate|alter)/.test(value)) return "CRITICAL";
   if (/(approve|transfer|payment|invoice|write|publish)/.test(value)) return "HIGH";
-  if (/(update|change|modify|sync|rerun)/.test(value)) return "MEDIUM";
+  if (/\b(update|change|modify|sync|rerun)\b.+/.test(value)) return "MEDIUM";
   if (/(show|list|find|summarize|what|how|query|search)/.test(value)) return "LOW";
   return null;
 }
@@ -220,13 +647,16 @@ function isKnowledgePrompt(prompt: string) {
 }
 
 function isSqlPrompt(prompt: string) {
-  return /(sql|query|database|table|revenue|invoice|customer|orders|count|total|list|show|trend|top|group by|select)/i.test(
+  return /(sql|query|database|table|collection|revenue|invoice|customer|orders|count|total|list|show|trend|top|group by|select|anomaly|anomalies|insight|analyze|analysis|summarize)/i.test(
     prompt,
   );
 }
 
 function isActionPrompt(prompt: string) {
-  return /\b(update|change|modify|set|execute|run action|trigger|approve|delete|remove|block|unblock|assign)\b/i.test(prompt);
+  if (/^\s*(any\s+)?updates?\??\s*$/i.test(prompt) || /^\s*(status|progress)\??\s*$/i.test(prompt)) return false;
+  return /\b(create|add|send|post|update|change|modify|set|execute|run action|trigger|approve|delete|remove|block|unblock|assign)\b/i.test(
+    prompt,
+  );
 }
 
 function isAgentStudioPrompt(prompt: string) {
@@ -259,9 +689,13 @@ function isWorkspaceContextPrompt(prompt: string) {
   return false;
 }
 
-function pluralize(count: number, singular: string, pluralWord?: string) {
-  if (count === 1) return singular;
-  return pluralWord ?? `${singular}s`;
+function isGreetingPrompt(prompt: string) {
+  const value = prompt.trim().toLowerCase();
+  return /^(hi|hello|hey|yo|hola|good morning|good afternoon|good evening)[!.,\s]*$/.test(value);
+}
+
+function referencesNamedDataSource(prompt: string) {
+  return /\b(using|from)\s+[a-z0-9_"'().:\- ]{2,}/i.test(prompt);
 }
 
 async function loadTenantContextSummary(supabase: AuthedSupabase, tenantId: string): Promise<TenantContextSummary | null> {
@@ -337,55 +771,6 @@ async function loadTenantContextSummary(supabase: AuthedSupabase, tenantId: stri
     pendingApprovals: pendingApprovalsError ? 0 : Math.max(0, Number(pendingApprovals ?? 0)),
     recentConnectionNames: safeConnections.slice(0, 5).map((row) => row.name),
   };
-}
-
-function buildTenantContextAnswer(prompt: string, summary: TenantContextSummary) {
-  const input = prompt.toLowerCase();
-
-  if (/\b(connection|connections|source|sources)\b/.test(input)) {
-    return [
-      `You currently have **${summary.totalConnections}** data ${pluralize(summary.totalConnections, "connection")} in this workspace.`,
-      `Active: **${summary.activeConnections}**. Syncing/Pending: **${summary.syncingConnections}**.`,
-      summary.recentConnectionNames.length > 0
-        ? `Recent sources: ${summary.recentConnectionNames.map((name) => `**${name}**`).join(", ")}.`
-        : "No sources are configured yet. Add a connection to enable SQL and RAG grounding.",
-    ].join("\n");
-  }
-
-  if (/\b(agent|agents)\b/.test(input)) {
-    return [
-      `Agents available: **${summary.totalAgents}** total, **${summary.readyAgents}** ready.`,
-      summary.totalAgents === 0
-        ? "No domain agents are ready yet. Finish connector sync/discovery to auto-generate them."
-        : "Use `/dashboard/agents` to inspect lifecycle, tools, and recent executions.",
-    ].join("\n");
-  }
-
-  if (/\b(knowledge|document|documents|embedding|embeddings|rag)\b/.test(input)) {
-    return [
-      `Indexed knowledge documents: **${summary.indexedDocuments}**.`,
-      summary.indexedDocuments > 0
-        ? "RAG retrieval will use indexed chunks plus lexical fallback during chat."
-        : "No indexed documents yet. Upload files or finish connection indexing to populate the knowledge base.",
-    ].join("\n");
-  }
-
-  if (/\b(approval|approvals)\b/.test(input)) {
-    return [
-      `Pending approvals: **${summary.pendingApprovals}**.`,
-      summary.pendingApprovals > 0
-        ? "Open `/dashboard/approvals` to review and resolve queued decisions."
-        : "No approvals are currently pending.",
-    ].join("\n");
-  }
-
-  return [
-    "I checked live workspace context for this request.",
-    `Connections: **${summary.totalConnections}** (active **${summary.activeConnections}**)`,
-    `Agents: **${summary.totalAgents}** total (**${summary.readyAgents}** ready)`,
-    `Indexed docs: **${summary.indexedDocuments}**`,
-    `Pending approvals: **${summary.pendingApprovals}**`,
-  ].join("\n");
 }
 
 function toStringArray(input: unknown): string[] {
@@ -580,7 +965,52 @@ function heuristicFixSql(failedSql: string) {
   return fixed;
 }
 
-async function generateSqlWithLlm(prompt: string): Promise<string | null> {
+async function loadSchemaContextForPrompt(args: {
+  supabase: AuthedSupabase;
+  prompt: string;
+}): Promise<string> {
+  const { data, error } = await args.supabase
+    .from("schema_entities")
+    .select("name, description, row_count, risk_level, sensitivity, source_kind")
+    .limit(120);
+
+  if (error || !data || data.length === 0) return "";
+
+  const promptTokens = tokenizePrompt(args.prompt);
+  const scored = (data as Record<string, unknown>[])
+    .map((row) => {
+      const name = String(row.name ?? "");
+      const description = String(row.description ?? "");
+      const corpus = `${name} ${description}`.toLowerCase();
+      let score = 0;
+      for (const token of promptTokens) {
+        if (corpus.includes(token)) score += 1;
+      }
+      if (promptTokens.length === 0) score = 1;
+      return {
+        score,
+        name,
+        description,
+        rowCount: Number(row.row_count ?? 0),
+        risk: String(row.risk_level ?? "low"),
+        sensitivity: String(row.sensitivity ?? "normal"),
+        sourceKind: String(row.source_kind ?? "table"),
+      };
+    })
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return b.rowCount - a.rowCount;
+    })
+    .slice(0, 14);
+
+  return scored
+    .map((row) =>
+      `- ${row.name} [${row.sourceKind}] rows=${row.rowCount} risk=${row.risk} sensitivity=${row.sensitivity} :: ${row.description}`,
+    )
+    .join("\n");
+}
+
+async function generateSqlWithLlm(prompt: string, schemaContext?: string): Promise<string | null> {
   const apiKey = Deno.env.get("OPENAI_API_KEY");
   if (!apiKey) return null;
 
@@ -591,11 +1021,16 @@ async function generateSqlWithLlm(prompt: string): Promise<string | null> {
       {
         role: "system",
         content:
-          "You are a SQL generator for analytics. Return exactly one read-only PostgreSQL query and nothing else. Rules: single statement, no semicolon, no comments, no INSERT/UPDATE/DELETE/DDL.",
+          "You are a SQL generator for analytics. Return exactly one read-only PostgreSQL query and nothing else. Rules: single statement, no semicolon, no comments, no INSERT/UPDATE/DELETE/DDL. Use only entities from provided schema context when available.",
       },
       {
         role: "user",
-        content: prompt,
+        content: [
+          `User request: ${prompt}`,
+          "",
+          "Schema context:",
+          schemaContext && schemaContext.trim().length > 0 ? schemaContext : "(none available)",
+        ].join("\n"),
       },
     ],
     temperature: 0.1,
@@ -622,6 +1057,7 @@ async function generateFixedSqlWithLlm(args: {
   prompt: string;
   failedSql: string;
   errorMessage?: string | null;
+  schemaContext?: string;
 }): Promise<string | null> {
   const apiKey = Deno.env.get("OPENAI_API_KEY");
   if (!apiKey) return null;
@@ -634,7 +1070,7 @@ async function generateFixedSqlWithLlm(args: {
       {
         role: "system",
         content:
-          "You fix SQL queries for PostgreSQL. Return exactly one corrected read-only query. Rules: single statement, no semicolon, no comments, no INSERT/UPDATE/DELETE/DDL.",
+          "You fix SQL queries for PostgreSQL. Return exactly one corrected read-only query. Rules: single statement, no semicolon, no comments, no INSERT/UPDATE/DELETE/DDL. Keep table/column references aligned with the provided schema context.",
       },
       {
         role: "user",
@@ -642,6 +1078,9 @@ async function generateFixedSqlWithLlm(args: {
           `User request: ${args.prompt}`,
           `Failed SQL: ${args.failedSql}`,
           `Database error: ${args.errorMessage ?? "unknown"}`,
+          "",
+          "Schema context:",
+          args.schemaContext && args.schemaContext.trim().length > 0 ? args.schemaContext : "(none available)",
           "Return only corrected SQL.",
         ].join("\n"),
       },
@@ -940,31 +1379,92 @@ function estimateUsage(prompt: string, assistant: string, knowledgeSources: numb
   };
 }
 
-function buildKnowledgeAnswer(knowledgeResult: KnowledgeResultPayload) {
-  if (knowledgeResult.sources.length === 0) {
-    return [
-      "I searched your knowledge base but found no relevant documents.",
-      "",
-      "Try uploading documents or connecting a knowledge source.",
-      "",
-      `Confidence: **${knowledgeResult.confidence}**.`,
-    ].join("\n");
+function isAnalyticalPrompt(prompt: string) {
+  return /\b(analyze|analysis|insight|insights|anomaly|anomalies|summarize|summary|trend|outlier)\b/i.test(prompt);
+}
+
+function summarizeDataReadiness(args: {
+  dataSourceReferenced: boolean;
+  knowledgeResult: KnowledgeResultPayload | null;
+  sqlResult: SqlResultPayload | null;
+}) {
+  if (!args.dataSourceReferenced) return null;
+
+  const sqlRows = args.sqlResult?.rows ?? [];
+  if (sqlRows.length > 0) {
+    return "Live row-level data is available from SQL execution for the requested source.";
   }
 
-  const citations = knowledgeResult.sources
-    .slice(0, 5)
-    .map((source, index) => `[${index + 1}](#source-${source.id})`)
-    .join(" ");
+  const sources = args.knowledgeResult?.sources ?? [];
+  if (sources.length === 0) {
+    return "No indexed source content was retrieved for the referenced data source.";
+  }
+
+  const schemaOnly = sources.every((source) => {
+    const sourceType = String(source.sourceType ?? "").toLowerCase();
+    const fileType = String(source.fileType ?? "").toLowerCase();
+    return sourceType.includes("schema") || fileType === "schema";
+  });
+
+  if (schemaOnly) {
+    return "Only schema-level metadata is currently available for the referenced source; row-level values were not retrieved.";
+  }
+
+  return "Partial source context was retrieved; infer cautiously and clearly state missing evidence.";
+}
+
+function buildDeterministicAssistant(args: {
+  prompt: string;
+  sqlResult: SqlResultPayload | null;
+  knowledgeResult: KnowledgeResultPayload | null;
+  dataReadinessHint: string | null;
+  reason: string;
+}) {
+  const rowCount = args.sqlResult?.rows.length ?? 0;
+  const sourceCount = args.knowledgeResult?.sources.length ?? 0;
+  const insightLines: string[] = [];
+  const anomalyLines: string[] = [];
+  const nextLines: string[] = [];
+
+  if (rowCount > 0) {
+    insightLines.push(`Retrieved ${rowCount} SQL row(s) from governed execution.`);
+  } else if (sourceCount > 0) {
+    insightLines.push(`Retrieved ${sourceCount} knowledge source excerpt(s).`);
+  } else {
+    insightLines.push("No SQL rows or indexed excerpts were available.");
+  }
+
+  if (args.dataReadinessHint) {
+    anomalyLines.push(args.dataReadinessHint);
+  } else {
+    anomalyLines.push("No high-confidence anomaly can be inferred from current evidence.");
+  }
+
+  if (rowCount === 0) {
+    nextLines.push("Fetch row-level values from the target source before anomaly summarization.");
+  } else {
+    nextLines.push("Expand query range and compare against prior period to confirm anomaly persistence.");
+  }
+  nextLines.push("Validate source field semantics with business owners for higher-confidence insights.");
 
   return [
-    `I found relevant context in your knowledge base ${citations}.`,
+    "1) Summary",
+    `Deterministic response generated (${args.reason}) without model synthesis.`,
     "",
-    `Confidence: **${knowledgeResult.confidence}**.`,
-    "I listed the most relevant excerpts in **Sources Used** below.",
+    "2) Key Insights",
+    ...insightLines.map((line) => `- ${line}`),
+    "",
+    "3) Anomalies / Risks",
+    ...anomalyLines.map((line) => `- ${line}`),
+    "",
+    "4) Recommended Next Actions",
+    ...nextLines.map((line, index) => `${index + 1}. ${line}`),
+    "",
+    `> Request: ${args.prompt}`,
   ].join("\n");
 }
 
-function buildAssistantText(args: {
+async function generateAssistantWithLlm(args: {
   prompt: string;
   agent: string;
   riskLevel: RiskLevel | null;
@@ -973,76 +1473,139 @@ function buildAssistantText(args: {
   actionProposal: ActionProposalPayload | null;
   approvalCreated: boolean;
   tenantContext: TenantContextSummary | null;
-}) {
-  if (args.actionProposal) {
-    return [
-      `I drafted a governed action proposal through **${args.agent}**.`,
-      "Review the **Proposed Action** card to simulate impact and execute safely.",
-      "",
-      `Risk context: **${args.actionProposal.riskLevel}**`,
-      "",
-      `> Request: ${args.prompt}`,
-    ].join("\n");
-  }
+  policyDecision: PolicyDecision;
+  dataReadinessHint: string | null;
+}): Promise<{ text: string | null; error: string | null }> {
+  const apiKey = Deno.env.get("OPENAI_API_KEY");
+  if (!apiKey) return { text: null, error: "OPENAI_API_KEY missing" };
 
-  if (args.approvalCreated) {
-    return [
-      `This request has been routed through **${args.agent}** and requires approval before execution.`,
-      "",
-      `Risk context: **${args.riskLevel ?? "HIGH"}**`,
-      "",
-      `> Request: ${args.prompt}`,
-    ].join("\n");
-  }
+  const model = Deno.env.get("OPENAI_MODEL") ?? "gpt-4.1-mini";
+  const sqlRows = args.sqlResult?.rows ?? [];
+  const sqlPreviewRows = sqlRows.slice(0, 30);
+  const knowledgeSources = args.knowledgeResult?.sources ?? [];
+  const sourcePreview = knowledgeSources.slice(0, 8).map((source) => ({
+    title: source.title,
+    sourceType: source.sourceType,
+    relevance: source.relevance,
+    excerpt: source.excerpt,
+  }));
 
-  if (args.knowledgeResult && args.sqlResult) {
-    return [
-      buildKnowledgeAnswer(args.knowledgeResult),
-      "",
-      "I also attached structured SQL output in the query result card.",
-      args.riskLevel ? `Risk context: **${args.riskLevel}**` : "Risk context: no privileged action detected",
-      "",
-      `> Request: ${args.prompt}`,
-    ].join("\n");
-  }
+  const styleDirective = isAnalyticalPrompt(args.prompt)
+    ? [
+        "Use this structure:",
+        "1) Summary",
+        "2) Key Insights (bullet list)",
+        "3) Anomalies / Risks (bullet list, say 'None detected' if none)",
+        "4) Recommended Next Actions (numbered list)",
+      ].join("\n")
+    : "Answer directly and concisely in plain markdown with bullets when useful.";
 
-  if (args.knowledgeResult) {
-    return [
-      buildKnowledgeAnswer(args.knowledgeResult),
-      args.riskLevel ? `Risk context: **${args.riskLevel}**` : "Risk context: no privileged action detected",
-      "",
-      `> Request: ${args.prompt}`,
-    ].join("\n");
-  }
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.2,
+      max_tokens: 850,
+      messages: [
+        {
+          role: "system",
+          content: [
+            "You are OpsAI assistant.",
+            "Always answer exactly what user asked using ONLY provided tool outputs/context.",
+            "Do not fabricate data or claim rows/metrics not present.",
+            "If data is insufficient, state what's missing and give exact next retrieval step.",
+            "If readiness says schema-only/limited data, do not claim computed insights from row-level values.",
+            "Keep tone professional, useful, structured, and intuitive.",
+            "For strategic architecture questions, answer in founder-architect mode: decisive recommendations, tradeoffs, and phased execution.",
+            styleDirective,
+          ].join("\n"),
+        },
+        {
+          role: "user",
+          content: [
+            `User request: ${args.prompt}`,
+            "",
+            `Selected agent: ${args.agent}`,
+            `Risk level: ${args.riskLevel ?? "LOW"}`,
+            `Approval required: ${args.approvalCreated ? "yes" : "no"}`,
+            `Data readiness: ${args.dataReadinessHint ?? "not_applicable"}`,
+            "",
+            "Policy decision:",
+            JSON.stringify(args.policyDecision ?? {}, null, 2),
+            "",
+            "SQL result summary:",
+            JSON.stringify(
+              args.sqlResult
+                ? {
+                    sql: args.sqlResult.sql,
+                    executionMs: args.sqlResult.executionMs,
+                    rowCount: sqlRows.length,
+                    columns: args.sqlResult.columns,
+                    error: args.sqlResult.error ?? null,
+                    explanation: args.sqlResult.explanation,
+                    noResultsHint: args.sqlResult.noResultsHint ?? null,
+                  }
+                : null,
+              null,
+              2,
+            ),
+            "",
+            "SQL sample rows (max 30):",
+            JSON.stringify(sqlPreviewRows, null, 2),
+            "",
+            "Knowledge source summary:",
+            JSON.stringify(
+              args.knowledgeResult
+                ? {
+                    sourceCount: knowledgeSources.length,
+                    confidence: args.knowledgeResult.confidence,
+                  }
+                : null,
+              null,
+              2,
+            ),
+            "",
+            "Knowledge excerpts (max 8):",
+            JSON.stringify(sourcePreview, null, 2),
+            "",
+            "Action proposal:",
+            JSON.stringify(args.actionProposal ?? null, null, 2),
+            "",
+            "Workspace context:",
+            JSON.stringify(args.tenantContext ?? null, null, 2),
+          ].join("\n"),
+        },
+      ],
+    }),
+  });
 
-  if (args.sqlResult?.error) {
-    return [
-      `I attempted a guarded SQL execution through **${args.agent}**, but it failed.`,
-      "Review the error card and retry with a refined query.",
-      "",
-      `> Request: ${args.prompt}`,
-    ].join("\n");
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    if (response.status === 429 || response.status >= 500) {
+      return {
+        text: buildDeterministicAssistant({
+          prompt: args.prompt,
+          sqlResult: args.sqlResult,
+          knowledgeResult: args.knowledgeResult,
+          dataReadinessHint: args.dataReadinessHint,
+          reason: `model unavailable (${response.status})`,
+        }),
+        error: `LLM completion failed (${response.status})${body ? `: ${body.slice(0, 300)}` : ""}`,
+      };
+    }
+    return {
+      text: null,
+      error: `LLM completion failed (${response.status})${body ? `: ${body.slice(0, 300)}` : ""}`,
+    };
   }
-
-  if (args.sqlResult) {
-    return [
-      `I executed a guarded SQL query through **${args.agent}** and attached the result card.`,
-      args.riskLevel ? `Risk context: **${args.riskLevel}**` : "Risk context: no privileged action detected",
-      "",
-      `> Request: ${args.prompt}`,
-    ].join("\n");
-  }
-
-  if (args.tenantContext) {
-    return buildTenantContextAnswer(args.prompt, args.tenantContext);
-  }
-
-  return [
-    `I processed this through **${args.agent}**.`,
-    "No SQL/data source execution was needed for this request.",
-    "",
-    `> Request: ${args.prompt}`,
-  ].join("\n");
+  const json = await response.json();
+  const assistant = String(json?.choices?.[0]?.message?.content ?? "").trim();
+  if (!assistant) return { text: null, error: "LLM completion returned empty content" };
+  return { text: assistant, error: null };
 }
 
 serve(async (req) => {
@@ -1064,27 +1627,85 @@ serve(async (req) => {
   const retryRunId = payload.retryRunId ? String(payload.retryRunId) : null;
   const retrySql = payload.retrySql ? String(payload.retrySql) : null;
   const retryError = payload.retryError ? String(payload.retryError) : null;
+  const runtimeRunId = payload.runtimeRunId ? String(payload.runtimeRunId).trim() : null;
 
   let prompt = String(payload.prompt ?? "").trim();
   if (!prompt && isRetryRequest) {
     prompt = "Retry failed SQL execution";
   }
-
-  if (!prompt) return errorResponse(400, "prompt is required");
+  if (!prompt && !runtimeRunId) return errorResponse(400, "prompt is required");
 
   const { data: tenantId, error: tenantError } = await auth.supabase.rpc("get_user_tenant_id");
   if (tenantError || !tenantId) {
     return errorResponse(400, "Could not resolve tenant context", tenantError?.message ?? null);
   }
 
+  if (runtimeRunId && !prompt) {
+    try {
+      const runtime = await getQueuedRuntimeRunStatus({
+        supabase: auth.supabase,
+        tenantId: String(tenantId),
+        runId: runtimeRunId,
+      });
+
+      return jsonResponse(200, {
+        ok: true,
+        sessionId: runtime.sessionId ?? sessionId,
+        agent: runtime.agentName,
+        riskLevel: "LOW",
+        assistant: runtime.assistant,
+        sqlResult: null,
+        knowledgeResult: null,
+        actionProposal: null,
+        approvalRequired: runtime.approvalRequired,
+        approvalRef: runtime.approvalRef,
+        toolRuns: runtime.toolRuns,
+        retrievalMeta: null,
+        policyDecision: {
+          allow: true,
+          approvalRequired: runtime.approvalRequired,
+          reason: "",
+          matchedRule: {},
+        },
+        assistantSource: "llm",
+        assistantModelError: null,
+        runtimeRunId: runtime.runId,
+        runtimeJobId: runtime.jobId,
+        runtimeStatus: runtime.status,
+        usage: runtime.usage,
+      });
+    } catch (runtimeStatusError) {
+      return errorResponse(
+        404,
+        "Runtime run not found",
+        runtimeStatusError instanceof Error ? runtimeStatusError.message : String(runtimeStatusError),
+      );
+    }
+  }
+
   let agent = await detectAgent(prompt, auth.supabase, tenantId);
   const detectedRiskLevel = detectRisk(prompt);
+  const greetingRequested = !isRetryRequest && isGreetingPrompt(prompt);
   const agentStudioRequested = !isRetryRequest && isAgentStudioPrompt(prompt);
   const actionRequested = !isRetryRequest && !agentStudioRequested && isActionPrompt(prompt);
   const riskLevel = detectedRiskLevel ?? (actionRequested ? "MEDIUM" : null);
-  const workspaceContextRequested = !isRetryRequest && !actionRequested && !agentStudioRequested && isWorkspaceContextPrompt(prompt);
-  const knowledgeRequested = !isRetryRequest && !actionRequested && !agentStudioRequested && isKnowledgePrompt(prompt);
-  const sqlRequested = !actionRequested && !agentStudioRequested && (isRetryRequest || isSqlPrompt(prompt));
+  const explicitKnowledgeRequested = !isRetryRequest && !actionRequested && !agentStudioRequested && isKnowledgePrompt(prompt);
+  const dataSourceReferenced = !isRetryRequest && !actionRequested && !agentStudioRequested && referencesNamedDataSource(prompt);
+  const workspaceContextRequested =
+    !isRetryRequest &&
+    !actionRequested &&
+    !agentStudioRequested &&
+    !greetingRequested &&
+    isWorkspaceContextPrompt(prompt);
+  const knowledgeRequested = explicitKnowledgeRequested || dataSourceReferenced;
+  const sqlRequested =
+    !actionRequested &&
+    !agentStudioRequested &&
+    !greetingRequested &&
+    (isRetryRequest || (!explicitKnowledgeRequested && (isSqlPrompt(prompt) || dataSourceReferenced)));
+  const runtimeMode = String(Deno.env.get("CHAT_EXECUTION_MODE") ?? "agent_runtime").trim().toLowerCase();
+  const runtimeEnabled = runtimeMode !== "direct";
+  const runtimeStrict = String(Deno.env.get("CHAT_RUNTIME_STRICT") ?? "true").trim().toLowerCase() !== "false";
   const destructive = hasDestructiveIntent(retrySql ?? prompt);
 
   let approvalCreated = false;
@@ -1181,7 +1802,10 @@ serve(async (req) => {
     const profileRole = String(raciRow.profile_role ?? "member").toLowerCase();
     const effectiveRoles = toStringList(raciRow.effective_roles);
     const matchedRoles = toStringList(raciRow.matched_roles);
-    const raciRole = mapRaciTypeToRole(raciRow.matched_raci_type);
+    const raciRole =
+      String(raciRow.matched_raci_type ?? "").trim().length > 0
+        ? mapRaciTypeToRole(raciRow.matched_raci_type)
+        : (profileRole === "owner" || profileRole === "admin" ? "Responsible" : "Consulted");
     const userRoleLabel = matchedRoles[0] ?? effectiveRoles[0] ?? profileRole;
 
     const requiresApproval =
@@ -1247,7 +1871,82 @@ serve(async (req) => {
     });
   }
 
-  if (workspaceContextRequested || (!knowledgeRequested && !sqlRequested && !actionRequested && !agentStudioRequested)) {
+  if (
+    runtimeEnabled &&
+    !isRetryRequest &&
+    !actionRequested &&
+    !agentStudioRequested &&
+    !workspaceContextRequested &&
+    !approvalCreated &&
+    policyDecision.allow
+  ) {
+    try {
+      const runtime = await runQueuedAgentRuntime({
+        supabase: auth.supabase,
+        tenantId: String(tenantId),
+        userId: auth.user.id,
+        sessionId,
+        prompt,
+        preferredAgentId: payload.agentId ? String(payload.agentId) : null,
+        preferredConnectionId: payload.connectionId ? String(payload.connectionId) : null,
+      });
+
+      agent = runtime.agentName;
+      toolRuns.push(...runtime.toolRuns);
+
+      for (const run of toolRuns) {
+        await persistToolRun({
+          supabase: auth.supabase,
+          tenantId: String(tenantId),
+          sessionId,
+          requestedBy: auth.user.id,
+          agentName: agent,
+          toolRun: run,
+        });
+      }
+
+      return jsonResponse(200, {
+        ok: true,
+        sessionId,
+        agent,
+        riskLevel: riskLevel ?? "LOW",
+        assistant: runtime.assistant,
+        sqlResult: null,
+        knowledgeResult: null,
+        actionProposal: null,
+        approvalRequired: runtime.approvalRequired,
+        approvalRef: runtime.approvalRef,
+        toolRuns,
+        retrievalMeta: null,
+        policyDecision,
+        assistantSource: "llm",
+        assistantModelError: null,
+        runtimeRunId: runtime.runId,
+        runtimeJobId: runtime.jobId,
+        runtimeStatus: runtime.status,
+        usage: runtime.usage,
+      });
+    } catch (runtimeError) {
+      if (runtimeStrict) {
+        return errorResponse(
+          503,
+          "Agent runtime is unavailable. Strict mode blocks direct fallback.",
+          runtimeError instanceof Error ? runtimeError.message : String(runtimeError),
+        );
+      }
+
+      toolRuns.push({
+        tool: "agent_runtime_dispatch",
+        status: "error",
+        latencyMs: null,
+        meta: {
+          error: runtimeError instanceof Error ? runtimeError.message : String(runtimeError),
+        },
+      });
+    }
+  }
+
+  if (workspaceContextRequested) {
     tenantContext = await loadTenantContextSummary(auth.supabase, tenantId);
     if (tenantContext) {
       toolRuns.push({
@@ -1491,6 +2190,10 @@ serve(async (req) => {
     let preferredConnectionId: string | null = null;
     let retryBaseSql = retrySql ?? null;
     let retryBaseError = retryError ?? null;
+    const schemaContext = await loadSchemaContextForPrompt({
+      supabase: auth.supabase,
+      prompt,
+    });
 
     if (retryRunId) {
       const { data: previousRun } = await auth.supabase
@@ -1540,13 +2243,14 @@ serve(async (req) => {
             prompt,
             failedSql,
             errorMessage: retryBaseError,
+            schemaContext,
           });
           const heuristic = heuristicFixSql(failedSql);
           sql = sanitizeSql(llmFixed ?? heuristic ?? fallback.sql);
           explanation = "Retried the query with corrected SQL and guardrail-safe execution.";
           followUps = retryHints;
         } else {
-          const llmSql = await generateSqlWithLlm(prompt);
+          const llmSql = await generateSqlWithLlm(prompt, schemaContext);
           sql = sanitizeSql(llmSql ?? fallback.sql);
           explanation = fallback.explanation;
           followUps = fallback.followUps;
@@ -1608,16 +2312,59 @@ serve(async (req) => {
     }
   }
 
-  const assistant = studioAssistant ?? buildAssistantText({
-    prompt,
-    agent,
-    riskLevel,
-    sqlResult,
+  const dataReadinessHint = summarizeDataReadiness({
+    dataSourceReferenced,
     knowledgeResult,
-    actionProposal,
-    approvalCreated,
-    tenantContext,
+    sqlResult,
   });
+
+  const llmAssistantResult = studioAssistant
+    ? null
+    : await generateAssistantWithLlm({
+      prompt,
+      agent,
+      riskLevel,
+      sqlResult,
+      knowledgeResult,
+      actionProposal,
+      approvalCreated,
+      tenantContext,
+      policyDecision,
+      dataReadinessHint,
+    });
+  const llmAssistant = llmAssistantResult?.text ?? null;
+
+  let assistant = studioAssistant ?? llmAssistant ?? null;
+  if (!assistant && llmAssistantResult?.error) {
+    const compactError = llmAssistantResult.error.replace(/\s+/g, " ").slice(0, 280);
+    assistant = [
+      "Live model response is currently unavailable.",
+      `Reason: ${compactError}`,
+      sqlResult ? `SQL execution status: ${sqlResult.error ? "error" : "success"}${sqlResult.error ? ` (${sqlResult.error})` : ""}` : null,
+      knowledgeResult ? `Knowledge sources retrieved: ${knowledgeResult.sources.length}` : null,
+      dataReadinessHint ? `Data readiness: ${dataReadinessHint}` : null,
+      actionProposal ? `Action proposal status: ${actionProposal.state.status}` : null,
+      "",
+      `> Request: ${prompt}`,
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join("\n");
+  }
+
+  if (!assistant) {
+    assistant = [
+      "Live model response is currently unavailable.",
+      "Reason: response synthesis returned no content.",
+      sqlResult ? `SQL execution status: ${sqlResult.error ? "error" : "success"}${sqlResult.error ? ` (${sqlResult.error})` : ""}` : null,
+      knowledgeResult ? `Knowledge sources retrieved: ${knowledgeResult.sources.length}` : null,
+      dataReadinessHint ? `Data readiness: ${dataReadinessHint}` : null,
+      actionProposal ? `Action proposal status: ${actionProposal.state.status}` : null,
+      "",
+      `> Request: ${prompt}`,
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join("\n");
+  }
 
   for (const run of toolRuns) {
     await persistToolRun({
@@ -1664,6 +2411,8 @@ serve(async (req) => {
     toolRuns,
     retrievalMeta,
     policyDecision,
+    assistantSource: studioAssistant ? "studio" : llmAssistant ? "llm" : "fallback",
+    assistantModelError: llmAssistantResult?.error ?? null,
     usage,
   });
 });

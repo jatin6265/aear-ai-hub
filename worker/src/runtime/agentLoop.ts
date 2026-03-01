@@ -1,31 +1,15 @@
 import { getSupabaseService } from '../lib/supabase';
-import { getRetriever } from '../pipeline/retriever';
-import OpenAI from 'openai';
-
-import { getGovernanceMiddleware } from '../governance/governanceMiddleware';
-import { getMcpRouter } from '../mcp/mcpRouter';
+import { routeToAgent } from '../services/router/multiAgent';
+import { OpsAIAgent } from '../services/agent-core';
+import { ApprovalRequiredError, GovernanceDeniedError } from '../services/governance/errors';
 
 export class AgentLoop {
-  private openai: OpenAI;
-
-  constructor() {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      throw new Error('OPENAI_API_KEY is missing');
-    }
-    this.openai = new OpenAI({ apiKey });
-  }
-
   /**
-   * Executes a single turn of the agent loop.
+   * Executes a single turn of the agent loop through the OpsAI service layer.
    */
   async runTurn(runId: string): Promise<void> {
     const supabase = getSupabaseService();
-    const retriever = getRetriever();
-    const governance = getGovernanceMiddleware();
-    const mcpRouter = getMcpRouter();
 
-    // 1. Fetch run details
     const { data: run, error: fetchError } = await supabase.getClient()
       .from('agent_runs')
       .select('*, ai_agents(*)')
@@ -37,136 +21,47 @@ export class AgentLoop {
     }
 
     try {
-      // 2. Pre-execution Governance Check
-      const decision = await governance.evaluateAction(
-        run.tenant_id,
-        run.requested_by,
-        'agent_execution', // Core agent turn
-        { agent_id: run.agent_id }
-      );
-
-      if (!decision.allowed) {
-        throw new Error(`Governance Block: ${decision.reason}`);
+      const requestedBy = String(run.requested_by ?? '').trim();
+      if (!requestedBy) {
+        throw new Error('agent_runs.requested_by is required for governed execution');
       }
 
-      // 3. Load context (Semantic memory)
-      const context = await retriever.search(run.tenant_id, JSON.stringify(run.input));
-      const contextText = context.map(c => c.content).join('\n---\n');
+      const runInput = normalizeRunInput(run.input);
+      const prompt = stringifyInput(runInput);
 
-      const agentConfig = (run.ai_agents?.config && isRecord(run.ai_agents.config))
-        ? run.ai_agents.config
-        : {};
-      const allowedToolIds = toStringArray(agentConfig.tool_ids);
-      const allowedServerIds = toStringArray(agentConfig.mcp_server_ids);
-
-      // 4. Load tenant MCP servers/tools and pass through governance-enforced execution.
-      const discoveredTools = await mcpRouter.listAvailableTools(run.tenant_id);
-      const filteredTools = discoveredTools
-        .filter((tool) => {
-          if (allowedServerIds.length > 0 && !allowedServerIds.includes(tool.serverId)) return false;
-          if (allowedToolIds.length === 0) return true;
-          const normalized = normalizeToolName(tool.name);
-          return allowedToolIds.includes(tool.name) || allowedToolIds.includes(normalized);
-        })
-        .slice(0, 40);
-
-      const toolMap = new Map(filteredTools.map((tool) => [tool.name, tool]));
-      const toolsForModel = filteredTools.map((tool) => ({
-        type: 'function',
-        function: {
-          name: tool.name,
-          description: tool.description || `Execute ${tool.name} via MCP`,
-          parameters: tool.inputSchema ?? { type: 'object', properties: {}, additionalProperties: true },
-        },
-      }));
-
-      const systemPrompt = [
-        String(run.ai_agents?.system_prompt ?? 'You are an OpsAI enterprise agent.'),
-        '',
-        'Governance policy:',
-        '- All tool calls are governed by RACI and risk policy checks.',
-        '- If a high-risk action requires approval, explain that approval is pending.',
-        '- Never fabricate tool execution results.',
-        '',
-        'Context from hybrid memory:',
-        contextText || '(no context found)',
-      ].join('\n');
-
-      const userInput = JSON.stringify(run.input);
-      const firstResponse = await this.openai.chat.completions.create({
-        model: String(run.ai_agents?.model ?? process.env.OPENAI_MODEL ?? 'gpt-4.1-mini'),
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userInput },
-        ],
-        tools: toolsForModel as any,
-        tool_choice: toolsForModel.length > 0 ? 'auto' : undefined,
+      const selectedAgent = await resolveAgentForRun({
+        runAgent: run.ai_agents,
+        runAgentId: String(run.agent_id ?? ''),
+        tenantId: String(run.tenant_id),
+        query: prompt,
       });
 
-      const firstMessage = firstResponse.choices[0]?.message;
-      let output = firstMessage?.content ?? '';
-      const toolRunSummary: Array<Record<string, unknown>> = [];
-      let totalPromptTokens = firstResponse.usage?.prompt_tokens ?? 0;
-      let totalCompletionTokens = firstResponse.usage?.completion_tokens ?? 0;
-      let totalTokens = firstResponse.usage?.total_tokens ?? 0;
+      if (!selectedAgent) {
+        throw new Error(`Agent not found for run ${runId}`);
+      }
 
-      if (Array.isArray(firstMessage?.tool_calls) && firstMessage.tool_calls.length > 0) {
-        const toolMessages: Array<{ role: 'tool'; tool_call_id: string; content: string }> = [];
+      const opsAgent = new OpsAIAgent({
+        tenantId: String(run.tenant_id),
+        userId: requestedBy,
+        runId,
+        sessionId: run.session_id ? String(run.session_id) : undefined,
+        agent: {
+          id: selectedAgent.id,
+          name: selectedAgent.name,
+          domain: selectedAgent.domain,
+          model: selectedAgent.model,
+          systemPrompt: selectedAgent.systemPrompt,
+          config: selectedAgent.config,
+        },
+      });
 
-        for (const toolCall of firstMessage.tool_calls) {
-          if (toolCall.type !== 'function') continue;
-          const toolName = String(toolCall.function?.name ?? '').trim();
-          if (!toolName || !toolMap.has(toolName)) {
-            throw new Error(`Unknown tool call rejected: ${toolName || '(empty)'}`);
-          }
+      const execution = await opsAgent.run(prompt);
 
-          const toolMeta = toolMap.get(toolName)!;
-          const parsedArgs = safeParseToolArgs(toolCall.function?.arguments ?? '{}');
-          const result = await mcpRouter.callTool({
-            toolName,
-            serverId: toolMeta.serverId,
-            params: parsedArgs,
-            tenantId: run.tenant_id,
-            userId: run.requested_by,
-          });
+      const { promptTokens, completionTokens, totalTokens } = execution.result.usage;
+      // 40 tokens ≈ 1 credit (conservative; covers both input and output at blended rate).
+      const totalCostCredits = totalTokens > 0 ? Math.max(1, Math.round(totalTokens / 40)) : 0;
 
-          toolRunSummary.push({
-            toolName,
-            serverId: toolMeta.serverId,
-            ok: result.success,
-            error: result.error ?? null,
-          });
-
-          toolMessages.push({
-            role: 'tool',
-            tool_call_id: toolCall.id,
-            content: JSON.stringify(result),
-          });
-        }
-
-        const secondResponse = await this.openai.chat.completions.create({
-          model: String(run.ai_agents?.model ?? process.env.OPENAI_MODEL ?? 'gpt-4.1-mini'),
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userInput },
-            firstMessage as any,
-            ...toolMessages,
-          ],
-        });
-
-        output = secondResponse.choices[0]?.message?.content ?? output;
-
-        totalPromptTokens += secondResponse.usage?.prompt_tokens ?? 0;
-        totalCompletionTokens += secondResponse.usage?.completion_tokens ?? 0;
-        totalTokens += secondResponse.usage?.total_tokens ?? 0;
-        if (totalTokens > 0) {
-          await supabase.getClient().from('usage_events').insert({
-            tenant_id: run.tenant_id,
-            metric_type: 'agent_tokens',
-            quantity: totalTokens,
-          });
-        }
-      } else if (totalTokens > 0) {
+      if (totalTokens > 0) {
         await supabase.getClient().from('usage_events').insert({
           tenant_id: run.tenant_id,
           metric_type: 'agent_tokens',
@@ -174,68 +69,179 @@ export class AgentLoop {
         });
       }
 
-      // 5. Update run with result
-      await supabase.getClient()
-        .from('agent_runs')
-        .update({
-          status: 'success',
-          output: {
-            content: output,
-            tool_runs: toolRunSummary,
-            context_sources: context.map((item) => ({
-              source_kind: item.source_kind,
-              source_id: item.source_id,
-              similarity: item.similarity,
-            })),
-          },
-          input_tokens: totalPromptTokens || null,
-          output_tokens: totalCompletionTokens || null,
-          completed_at: new Date().toISOString()
-        })
-        .eq('id', runId);
+      // Persist each tool call as a first-class row for analytics / audit.
+      // Runs concurrently with the agent_runs update; failure is non-fatal.
+      const toolCallRows = execution.result.toolRuns.map((tr) => ({
+        tenant_id: run.tenant_id,
+        run_id: runId,
+        turn_index: tr.turnIndex ?? 0,
+        tool_name: tr.toolName,
+        arguments: tr.arguments ?? {},
+        result: tr.ok ? (tr.data !== undefined ? (tr.data as Record<string, unknown>) : null) : null,
+        ok: tr.ok,
+        error_message: tr.error ?? null,
+      }));
 
-    } catch (err) {
-      console.error(`Agent loop turn failed for run ${runId}:`, err);
-      await supabase.getClient()
-        .from('agent_runs')
-        .update({
-          status: 'failed',
-          error: String(err),
-          completed_at: new Date().toISOString()
-        })
-        .eq('id', runId);
+      const [runUpdate] = await Promise.all([
+        supabase.getClient()
+          .from('agent_runs')
+          .update({
+            status: 'success',
+            output: {
+              content: execution.result.output,
+              engine: execution.engine,
+              tool_runs: execution.result.toolRuns,
+              context: {
+                semantic_hits: execution.context.semantic.length,
+                structured_hits: execution.context.structured.length,
+                timeline_hits: execution.context.timeline.length,
+                user_role: execution.context.userRole,
+              },
+            },
+            input_tokens: promptTokens,
+            output_tokens: completionTokens,
+            total_cost_credits: totalCostCredits,
+            completed_at: new Date().toISOString(),
+          })
+          .eq('id', runId),
+        toolCallRows.length > 0
+          ? (async () => { try { await supabase.getClient().from('agent_tool_calls').insert(toolCallRows); } catch { /* non-fatal */ } })()
+          : Promise.resolve(),
+      ]);
+
+      if (runUpdate.error) {
+        throw new Error(`Failed to update agent_run ${runId}: ${runUpdate.error.message}`);
+      }
+    } catch (error) {
+      await handleRunFailure(runId, error);
     }
   }
 }
 
-function toStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.map((item) => String(item ?? '').trim()).filter((item) => item.length > 0);
-}
+async function handleRunFailure(runId: string, error: unknown): Promise<void> {
+  const supabase = getSupabaseService();
 
-function safeParseToolArgs(raw: string): Record<string, unknown> {
-  const text = String(raw ?? '').trim();
-  if (!text) return {};
-  try {
-    const parsed = JSON.parse(text) as unknown;
-    if (isRecord(parsed)) return parsed;
-    return {};
-  } catch {
-    return {};
+  if (error instanceof ApprovalRequiredError) {
+    const approvalOutput = {
+      content: 'Execution paused pending approval.',
+      approvalRequired: true,
+      approvalId: error.approvalId,
+      riskLevel: error.riskLevel,
+      simulation: error.simulation,
+    };
+
+    const waitingUpdate = await supabase.getClient()
+      .from('agent_runs')
+      .update({
+        status: 'waiting_approval',
+        output: approvalOutput,
+        error: null,
+        completed_at: null,
+      })
+      .eq('id', runId);
+
+    // Backward compatibility if waiting_approval status is not available yet.
+    if (waitingUpdate.error) {
+      await supabase.getClient()
+        .from('agent_runs')
+        .update({
+          status: 'failed',
+          output: approvalOutput,
+          error: `approval_required:${error.approvalId}`,
+          completed_at: new Date().toISOString(),
+        })
+        .eq('id', runId);
+    }
+    return;
   }
+
+  const errorMessage = error instanceof GovernanceDeniedError
+    ? error.message
+    : (error instanceof Error ? error.message : String(error));
+
+  console.error(`Agent loop turn failed for run ${runId}:`, error);
+  await supabase.getClient()
+    .from('agent_runs')
+    .update({
+      status: 'failed',
+      error: errorMessage,
+      completed_at: new Date().toISOString(),
+    })
+    .eq('id', runId);
 }
 
-function normalizeToolName(value: string): string {
-  return String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_]+/g, '_')
-    .replace(/_+/g, '_')
-    .replace(/^_+|_+$/g, '');
+async function resolveAgentForRun(input: {
+  runAgent: unknown;
+  runAgentId: string;
+  tenantId: string;
+  query: string;
+}): Promise<{
+  id: string;
+  name: string;
+  domain: string;
+  model: string;
+  systemPrompt: string;
+  config: Record<string, unknown>;
+} | null> {
+  const direct = normalizeAgentRow(input.runAgent, input.runAgentId);
+  if (direct) return direct;
+
+  const routed = await routeToAgent(input.query, input.tenantId);
+  if (!routed) return null;
+
+  return {
+    id: routed.id,
+    name: routed.name,
+    domain: routed.domain,
+    model: String((routed.config.model as string | undefined) ?? process.env.OPENAI_MODEL ?? 'gpt-4.1-mini'),
+    systemPrompt: String((routed.config.system_prompt as string | undefined) ?? 'You are an OpsAI enterprise agent.'),
+    config: routed.config,
+  };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+function normalizeAgentRow(
+  row: unknown,
+  fallbackId: string
+): {
+  id: string;
+  name: string;
+  domain: string;
+  model: string;
+  systemPrompt: string;
+  config: Record<string, unknown>;
+} | null {
+  if (!row || typeof row !== 'object' || Array.isArray(row)) return null;
+  const record = row as Record<string, unknown>;
+  const config = asRecord(record.config);
+
+  return {
+    id: String(record.id ?? fallbackId),
+    name: String(record.name ?? 'OpsAI Agent'),
+    domain: String(record.domain ?? 'general'),
+    model: String(config.model ?? process.env.OPENAI_MODEL ?? 'gpt-4.1-mini'),
+    systemPrompt: String(config.system_prompt ?? 'You are an OpsAI enterprise agent.'),
+    config,
+  };
+}
+
+function normalizeRunInput(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return { message: String(value ?? '') };
+}
+
+function stringifyInput(input: Record<string, unknown>): string {
+  const message = String(input.message ?? input.prompt ?? '').trim();
+  if (message.length > 0) return message;
+  return JSON.stringify(input);
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {};
 }
 
 let instance: AgentLoop | null = null;

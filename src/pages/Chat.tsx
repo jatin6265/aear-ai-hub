@@ -61,6 +61,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import SimulationPreview from "@/components/SimulationPreview";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
@@ -199,6 +200,10 @@ type ConnectionRow = Pick<
   SupabaseDatabase["public"]["Tables"]["api_connections"]["Row"],
   "id" | "name" | "type" | "status"
 >;
+type AgentOption = Pick<
+  SupabaseDatabase["public"]["Tables"]["ai_agents"]["Row"],
+  "id" | "name" | "status" | "domain" | "is_custom"
+>;
 type SearchKnowledgeRow =
   SupabaseDatabase["public"]["Functions"]["search_knowledge_documents"]["Returns"][number];
 
@@ -228,6 +233,11 @@ type ChatMessage = {
 type ChatExecuteResponse = {
   ok: boolean;
   assistant?: string;
+  assistantSource?: "studio" | "llm" | "fallback";
+  assistantModelError?: string | null;
+  runtimeRunId?: string | null;
+  runtimeJobId?: string | null;
+  runtimeStatus?: string | null;
   agent?: string;
   riskLevel?: string | null;
   sqlResult?: SqlResultPayload | null;
@@ -323,6 +333,7 @@ const TABLE_PAGE_SIZE = 10;
 const PII_COLUMN_REGEX = /(email|phone|mobile|ssn|tax|dob|birth|address|customer_name|full_name|name)$/i;
 const CHART_COLORS = ["#7c3aed", "#06b6d4", "#22c55e", "#f59e0b", "#f43f5e", "#3b82f6"];
 const ACCEPTED_DOCUMENT_EXTENSIONS = new Set(["pdf", "docx", "txt", "md", "png", "jpg", "jpeg", "webp"]);
+const SESSION_AGENT_BINDING_STORAGE_KEY = "opsai.chat.session_agent_binding.v1";
 
 function isMissingFunctionError(error: { code?: string | null; message?: string | null }) {
   const message = error.message?.toLowerCase() ?? "";
@@ -596,19 +607,12 @@ function detectAgent(prompt: string) {
 
 function detectRisk(prompt: string): RiskLevel | null {
   const value = prompt.toLowerCase();
+  if (/^\s*(any\s+)?updates?\??\s*$/.test(value) || /^\s*(status|progress)\??\s*$/.test(value)) return "LOW";
   if (/(drop|delete|remove|shutdown|terminate|wipe)/.test(value)) return "CRITICAL";
   if (/(approve|transfer|payment|invoice|write|publish)/.test(value)) return "HIGH";
-  if (/(update|change|modify|sync|rerun)/.test(value)) return "MEDIUM";
+  if (/\b(update|change|modify|sync|rerun)\b.+/.test(value)) return "MEDIUM";
   if (/(show|list|find|summarize|what|how|query)/.test(value)) return "LOW";
   return null;
-}
-
-function seededRange(seed: string, min: number, max: number) {
-  let value = 0;
-  for (let i = 0; i < seed.length; i += 1) {
-    value = (value * 31 + seed.charCodeAt(i)) % 1_000_003;
-  }
-  return min + (value % (max - min + 1));
 }
 
 function inferColumnType(key: string, values: SqlResultPrimitive[]): SqlColumnType {
@@ -846,312 +850,10 @@ function downloadTextFile(filename: string, content: string, mime: string) {
   URL.revokeObjectURL(url);
 }
 
-function buildKnowledgeAnswer(result: KnowledgeResultPayload) {
-  if (result.sources.length === 0) {
-    return [
-      "I searched your knowledge base but found no relevant documents.",
-      "",
-      "Try uploading documents or connecting a knowledge source.",
-    ].join("\n");
-  }
-
-  const citations = result.sources
-    .slice(0, 5)
-    .map((source, index) => `[${index + 1}](#source-${source.id})`)
-    .join(" ");
-
-  return [
-    `I found relevant context in your knowledge base ${citations}.`,
-    "",
-    `Confidence: **${result.confidence}**.`,
-    "I listed the most relevant excerpts in **Sources Used** below.",
-  ].join("\n");
-}
-
-function buildAssistantReply(
-  prompt: string,
-  agent: string,
-  risk: RiskLevel | null,
-  queryResult: SqlResultPayload | null,
-  knowledgeResult: KnowledgeResultPayload | null,
-) {
-  if (knowledgeResult && queryResult) {
-    return [
-      buildKnowledgeAnswer(knowledgeResult),
-      "",
-      "I also attached structured SQL output in the query result card.",
-      risk ? `Risk context: **${risk}**` : "Risk context: no privileged action detected",
-      "",
-      `> Request: ${prompt}`,
-    ].join("\n");
-  }
-
-  if (knowledgeResult) {
-    return [
-      buildKnowledgeAnswer(knowledgeResult),
-      "",
-      risk ? `Risk context: **${risk}**` : "Risk context: no privileged action detected",
-      "",
-      `> Request: ${prompt}`,
-    ].join("\n");
-  }
-
-  if (queryResult?.error) {
-    return [
-      `I ran a SQL attempt through **${agent}** and it failed validation.`,
-      "",
-      "I attached the error details below with a retry option.",
-      risk ? `Risk context: **${risk}**` : "Risk context: no privileged action detected",
-      "",
-      `> Request: ${prompt}`,
-    ].join("\n");
-  }
-
-  if (queryResult && queryResult.rows.length === 0) {
-    return [
-      `I executed a SQL query through **${agent}**.`,
-      "",
-      "The query returned no records right now. Review the suggestion in the result card.",
-      risk ? `Risk context: **${risk}**` : "Risk context: no privileged action detected",
-      "",
-      `> Request: ${prompt}`,
-    ].join("\n");
-  }
-
-  if (queryResult) {
-    return [
-      `I executed a SQL query through **${agent}** and attached structured results below.`,
-      "",
-      risk ? `Risk context: **${risk}**` : "Risk context: no privileged action detected",
-      "",
-      `> Request: ${prompt}`,
-    ].join("\n");
-  }
-
-  return [
-    `I can help with this through **${agent}**.`,
-    "",
-    "### Proposed execution",
-    "- I will query connected data sources and align with active RACI rules.",
-    "- I will return a concise summary and suggested next action.",
-    risk ? `- Risk assessment: **${risk}**` : "- Risk assessment: no privileged action detected",
-    "",
-    `> Request: ${prompt}`,
-  ].join("\n");
-}
-
-function isKnowledgePrompt(prompt: string) {
-  return /(document|documents|knowledge|policy|handbook|playbook|guide|notion|google doc|file|pdf|txt|docx|source)/i.test(
-    prompt,
-  );
-}
-
 function mapConfidence(resultCount: number): ConfidenceLevel {
   if (resultCount >= 3) return "High confidence";
   if (resultCount >= 1) return "Medium confidence";
   return "Based on limited data";
-}
-
-function buildKnowledgePayloadFromRows(prompt: string, rows: SearchKnowledgeRow[]): KnowledgeResultPayload {
-  const sources: KnowledgeSource[] = rows.slice(0, 5).map((row) => ({
-    id: row.id,
-    title: row.title,
-    fileType: row.file_type,
-    sourceType: row.source_type,
-    relevance: Number(row.relevance ?? 0),
-    excerpt: row.excerpt,
-    externalUrl: row.external_url,
-    storagePath: row.storage_path,
-  }));
-
-  return {
-    query: prompt,
-    confidence: mapConfidence(sources.length),
-    sources,
-  };
-}
-
-function generateQueryResultFromPrompt(prompt: string): SqlResultPayload | null {
-  const input = prompt.toLowerCase();
-  const queryLike = /(sql|query|database|table|revenue|invoice|customer|orders|count|total|list|show|trend)/.test(input);
-  if (!queryLike) return null;
-
-  const executionMs = seededRange(prompt, 24, 95);
-
-  if (/(error|invalid|syntax)/.test(input)) {
-    return {
-      sql: "SELECT customer_id, SUM(amount) FROM invoices WHERE status = 'paid' GROUP BY customer_id ORDER amount DESC;",
-      executionMs,
-      columns: [],
-      rows: [],
-      error: "Syntax error near ORDER. Did you mean ORDER BY amount DESC?",
-      explanation: "The query failed before execution because SQL syntax is invalid.",
-      followUps: [
-        "Fix SQL syntax and run again",
-        "Use a safer grouped query template",
-        "Return top 10 customers by paid amount",
-      ],
-    };
-  }
-
-  if (/(no result|no records|empty)/.test(input)) {
-    return {
-      sql: "SELECT * FROM invoices WHERE due_date < NOW() AND status = 'paid';",
-      executionMs,
-      columns: [
-        { key: "invoice_id", label: "Invoice ID", type: "text" },
-        { key: "due_date", label: "Due Date", type: "date" },
-        { key: "status", label: "Status", type: "text" },
-      ],
-      rows: [],
-      explanation: "No paid invoices are currently past due, which usually indicates collections are healthy.",
-      noResultsHint: "Try widening the time range or using status = 'overdue'.",
-      followUps: [
-        "Show unpaid invoices due in next 7 days",
-        "Show overdue invoices by customer",
-        "Compare overdue count vs last month",
-      ],
-    };
-  }
-
-  if (/(total|count|how many|single value|kpi)/.test(input)) {
-    return {
-      sql: "SELECT SUM(amount) AS total_revenue_usd FROM invoices WHERE paid_at >= date_trunc('month', NOW());",
-      executionMs,
-      columns: [{ key: "total_revenue_usd", label: "Total Revenue (USD)", type: "number" }],
-      rows: [{ total_revenue_usd: 428530 }],
-      explanation: "Revenue this month is 428.53K USD from paid invoices only.",
-      followUps: [
-        "Break this down by region",
-        "Compare to last month",
-        "Show top 5 customers contributing to revenue",
-      ],
-    };
-  }
-
-  if (/(trend|daily|weekly|monthly|last 30|time series)/.test(input) || /revenue/.test(input)) {
-    const rows = [
-      { day: "2026-02-14", revenue_usd: 18200 },
-      { day: "2026-02-15", revenue_usd: 17640 },
-      { day: "2026-02-16", revenue_usd: 19120 },
-      { day: "2026-02-17", revenue_usd: 20510 },
-      { day: "2026-02-18", revenue_usd: 19830 },
-      { day: "2026-02-19", revenue_usd: 22100 },
-      { day: "2026-02-20", revenue_usd: 23240 },
-    ];
-
-    return {
-      sql: "SELECT paid_at::date AS day, SUM(amount) AS revenue_usd FROM invoices WHERE paid_at >= NOW() - interval '7 days' GROUP BY 1 ORDER BY 1;",
-      executionMs,
-      columns: [
-        { key: "day", label: "Day", type: "date" },
-        { key: "revenue_usd", label: "Revenue (USD)", type: "number" },
-      ],
-      rows,
-      explanation: "Revenue is trending upward over the past week with a stronger finish in the last two days.",
-      followUps: [
-        "Show this by product line",
-        "Flag anomalies in this trend",
-        "Forecast next 7 days revenue",
-      ],
-    };
-  }
-
-  if (/(segment|category|status|group by|distribution|overdue)/.test(input)) {
-    const rows = [
-      { status: "Paid", invoices: 1240, total_usd: 412300 },
-      { status: "Overdue", invoices: 74, total_usd: 82100 },
-      { status: "Pending", invoices: 191, total_usd: 102400 },
-      { status: "Draft", invoices: 62, total_usd: 18050 },
-    ];
-
-    return {
-      sql: "SELECT status, COUNT(*) AS invoices, SUM(amount) AS total_usd FROM invoices GROUP BY status ORDER BY total_usd DESC;",
-      executionMs,
-      columns: [
-        { key: "status", label: "Invoice Status", type: "text" },
-        { key: "invoices", label: "Invoice Count", type: "number" },
-        { key: "total_usd", label: "Total (USD)", type: "number" },
-      ],
-      rows,
-      explanation: "Most value is in paid invoices, while overdue balances are concentrated in a smaller bucket.",
-      followUps: [
-        "List top overdue customers",
-        "Compare status distribution to last month",
-        "Show aging buckets for overdue invoices",
-      ],
-    };
-  }
-
-  const rows = [
-    {
-      customer_name: "Acme Corp",
-      email: "finance@acme.com",
-      country: "US",
-      amount_due: 18400,
-      due_date: "2026-02-13",
-      status: "Overdue",
-    },
-    {
-      customer_name: "Globex Industries",
-      email: "ap@globex.io",
-      country: "UK",
-      amount_due: 9200,
-      due_date: "2026-02-15",
-      status: "Overdue",
-    },
-    {
-      customer_name: "Initech",
-      email: "billing@initech.ai",
-      country: "DE",
-      amount_due: 7500,
-      due_date: "2026-02-19",
-      status: "Pending",
-    },
-  ];
-
-  return {
-    sql: "SELECT customer_name, email, country, amount_due, due_date, status FROM customer_invoices ORDER BY amount_due DESC LIMIT 25;",
-    executionMs,
-    columns: [
-      { key: "customer_name", label: "Customer", type: "text", pii: true },
-      { key: "email", label: "Email", type: "text", pii: true },
-      { key: "country", label: "Country", type: "text" },
-      { key: "amount_due", label: "Amount Due", type: "number" },
-      { key: "due_date", label: "Due Date", type: "date" },
-      { key: "status", label: "Status", type: "text" },
-    ],
-    rows,
-    explanation: "A few high-value accounts are driving the current outstanding balance.",
-    followUps: [
-      "Show only invoices overdue by more than 15 days",
-      "Draft reminders for top 3 overdue accounts",
-      "Summarize overdue totals by country",
-    ],
-  };
-}
-
-function buildFixedQueryResult(failedResult: SqlResultPayload): SqlResultPayload {
-  return {
-    sql: "SELECT customer_id, SUM(amount) AS total_paid FROM invoices WHERE status = 'paid' GROUP BY customer_id ORDER BY total_paid DESC LIMIT 10;",
-    executionMs: Math.max(22, failedResult.executionMs - 8),
-    columns: [
-      { key: "customer_id", label: "Customer ID", type: "text" },
-      { key: "total_paid", label: "Total Paid", type: "number" },
-    ],
-    rows: [
-      { customer_id: "CUST-1001", total_paid: 89200 },
-      { customer_id: "CUST-1004", total_paid: 78440 },
-      { customer_id: "CUST-1012", total_paid: 65910 },
-      { customer_id: "CUST-1015", total_paid: 61120 },
-    ],
-    explanation: "The corrected query now returns the top paying customers by total paid amount.",
-    followUps: [
-      "Include company names for these customer IDs",
-      "Add last payment date to this result",
-      "Filter this list for current quarter only",
-    ],
-  };
 }
 
 function riskBadgeClass(risk: RiskLevel) {
@@ -2060,9 +1762,12 @@ export default function Chat() {
   const [tenantId, setTenantId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [sessionAgentBindings, setSessionAgentBindings] = useState<Record<string, string>>({});
+  const [draftAgentId, setDraftAgentId] = useState<string>("__auto__");
   const [sessionSearch, setSessionSearch] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [connections, setConnections] = useState<ConnectionRow[]>([]);
+  const [agentOptions, setAgentOptions] = useState<AgentOption[]>([]);
   const [composerValue, setComposerValue] = useState("");
   const [loadingSessions, setLoadingSessions] = useState(true);
   const [loadingMessages, setLoadingMessages] = useState(false);
@@ -2082,6 +1787,20 @@ export default function Chat() {
   } | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [uploadingFileName, setUploadingFileName] = useState<string | null>(null);
+
+  const activeAgentSelection = activeSessionId
+    ? sessionAgentBindings[activeSessionId] ?? "__auto__"
+    : draftAgentId;
+
+  const activeAgentOption = useMemo(
+    () => agentOptions.find((option) => option.id === activeAgentSelection) ?? null,
+    [activeAgentSelection, agentOptions],
+  );
+
+  const resolvePinnedAgentId = (sessionId: string | null) => {
+    const selected = sessionId ? sessionAgentBindings[sessionId] ?? "__auto__" : draftAgentId;
+    return selected !== "__auto__" ? selected : null;
+  };
 
   const uploadKnowledgeDocument = async (file: File) => {
     if (!tenantId || !user) {
@@ -2226,6 +1945,51 @@ export default function Chat() {
   };
 
   useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(SESSION_AGENT_BINDING_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      if (!parsed || typeof parsed !== "object") return;
+      const normalized = Object.entries(parsed).reduce<Record<string, string>>((acc, [sessionId, agentId]) => {
+        if (typeof sessionId !== "string" || typeof agentId !== "string") return acc;
+        if (!sessionId.trim() || !agentId.trim()) return acc;
+        acc[sessionId] = agentId;
+        return acc;
+      }, {});
+      setSessionAgentBindings(normalized);
+    } catch {
+      // Ignore malformed local preference payload.
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        SESSION_AGENT_BINDING_STORAGE_KEY,
+        JSON.stringify(sessionAgentBindings),
+      );
+    } catch {
+      // Ignore storage write failures.
+    }
+  }, [sessionAgentBindings]);
+
+  useEffect(() => {
+    if (activeAgentSelection === "__auto__") return;
+    const exists = agentOptions.some((option) => option.id === activeAgentSelection);
+    if (exists) return;
+
+    if (activeSessionId) {
+      setSessionAgentBindings((prev) => {
+        const next = { ...prev };
+        delete next[activeSessionId];
+        return next;
+      });
+      return;
+    }
+    setDraftAgentId("__auto__");
+  }, [activeAgentSelection, activeSessionId, agentOptions]);
+
+  useEffect(() => {
     if (!user) return;
     let active = true;
 
@@ -2236,7 +2000,7 @@ export default function Chat() {
         if (!active) return;
         setTenantId(workspace.tenantId);
 
-        const [sessionsRpcResponse, connectionsResponse] = await Promise.all([
+        const [sessionsRpcResponse, connectionsResponse, agentsResponse] = await Promise.all([
           supabase.rpc("get_chat_sessions", { p_limit: 120 }),
           supabase
             .from("api_connections")
@@ -2244,6 +2008,13 @@ export default function Chat() {
             .eq("tenant_id", workspace.tenantId)
             .order("created_at", { ascending: false })
             .limit(8),
+          supabase
+            .from("ai_agents")
+            .select("id, name, status, domain, is_custom")
+            .eq("tenant_id", workspace.tenantId)
+            .neq("status", "disabled")
+            .order("updated_at", { ascending: false })
+            .limit(100),
         ]);
 
         let hydratedSessions: ChatSession[] = [];
@@ -2275,10 +2046,13 @@ export default function Chat() {
 
         if (connectionsResponse.error) throw connectionsResponse.error;
         const connectionRows = (connectionsResponse.data ?? []) as ConnectionRow[];
+        if (agentsResponse.error) throw agentsResponse.error;
+        const availableAgents = (agentsResponse.data ?? []) as AgentOption[];
 
         if (!active) return;
 
         setConnections(connectionRows);
+        setAgentOptions(availableAgents);
         setSessions(sortSessionsByActivity(hydratedSessions));
         setActiveSessionId((current) =>
           current && hydratedSessions.some((session) => session.id === current) ? current : hydratedSessions[0]?.id ?? null,
@@ -2579,45 +2353,6 @@ export default function Chat() {
     };
   }, [connections, localContextSummary, remoteContextSummary]);
 
-  const searchKnowledgeSources = async (prompt: string): Promise<KnowledgeResultPayload | null> => {
-    if (!isKnowledgePrompt(prompt)) return null;
-
-    const { data, error } = await supabase.rpc("search_knowledge_documents", {
-      p_query: prompt,
-      p_limit: 5,
-    });
-
-    if (error) {
-      const functionMissing = isMissingFunctionError(error);
-      if (!functionMissing) throw error;
-
-      const fallback = await supabase
-        .from("knowledge_documents")
-        .select("id, title, file_type, source_type, external_url, storage_path, excerpt")
-        .eq("tenant_id", tenantId ?? "")
-        .eq("status", "indexed")
-        .or(`title.ilike.%${prompt}%,excerpt.ilike.%${prompt}%`)
-        .order("created_at", { ascending: false })
-        .limit(5);
-
-      if (fallback.error) throw fallback.error;
-
-      const fallbackRows: SearchKnowledgeRow[] = (fallback.data ?? []).map((row) => ({
-        id: row.id,
-        title: row.title,
-        file_type: row.file_type,
-        source_type: row.source_type,
-        external_url: row.external_url,
-        storage_path: row.storage_path,
-        excerpt: row.excerpt ?? "No indexed snippet available yet.",
-        relevance: 55,
-      }));
-      return buildKnowledgePayloadFromRows(prompt, fallbackRows);
-    }
-
-    return buildKnowledgePayloadFromRows(prompt, (data ?? []) as SearchKnowledgeRow[]);
-  };
-
   const handleDocumentUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -2821,8 +2556,27 @@ export default function Chat() {
   const handleNewChat = async () => {
     const newId = await createSession();
     if (!newId) return;
+    if (draftAgentId !== "__auto__") {
+      setSessionAgentBindings((prev) => ({ ...prev, [newId]: draftAgentId }));
+    }
     setComposerValue("");
     window.setTimeout(() => inputRef.current?.focus(), 20);
+  };
+
+  const handleAgentSelectionChange = (value: string) => {
+    if (activeSessionId) {
+      setSessionAgentBindings((prev) => {
+        const next = { ...prev };
+        if (value === "__auto__") {
+          delete next[activeSessionId];
+        } else {
+          next[activeSessionId] = value;
+        }
+        return next;
+      });
+      return;
+    }
+    setDraftAgentId(value);
   };
 
   const handleCopy = async (value: string) => {
@@ -2935,6 +2689,7 @@ export default function Chat() {
       const { data, error } = await invokeEdge("chat-execute", {
         body: {
           sessionId: activeSessionId,
+          agentId: resolvePinnedAgentId(activeSessionId),
           prompt: "Retry the failed SQL query with a safe fix.",
           retryRunId: failedResult.runId ?? null,
           retrySql: failedResult.sql,
@@ -2953,7 +2708,20 @@ export default function Chat() {
         content =
           typeof payload.assistant === "string" && payload.assistant.trim()
             ? payload.assistant
-            : buildAssistantReply("Retry failed SQL query", agent, riskLevel, queryResult, null);
+            : [
+                "Live response synthesis did not return content.",
+                payload.assistantModelError ? `Reason: ${payload.assistantModelError}` : "Reason: Unknown runtime error",
+                "Retry again after validating backend model credentials/quota.",
+              ].join("\n");
+
+        if (payload.assistantSource === "fallback") {
+          toast({
+            title: "Model response unavailable",
+            description: payload.assistantModelError
+              ? payload.assistantModelError
+              : "Backend returned fallback mode. Check model credentials/quota.",
+          });
+        }
 
         if (payload.approvalRequired) {
           toast({
@@ -3071,6 +2839,37 @@ export default function Chat() {
     }
   };
 
+  const pollRuntimeRunUntilSettled = async (args: {
+    sessionId: string;
+    runId: string;
+    timeoutMs?: number;
+  }): Promise<ChatExecuteResponse | null> => {
+    const timeoutMs = Math.max(5_000, args.timeoutMs ?? 45_000);
+    const pollMs = 2_000;
+    const deadline = Date.now() + timeoutMs;
+
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => window.setTimeout(resolve, pollMs));
+      const { data, error } = await invokeEdge("chat-execute", {
+        body: {
+          sessionId: args.sessionId,
+          runtimeRunId: args.runId,
+        },
+      });
+      if (error) continue;
+
+      const payload = (data ?? null) as ChatExecuteResponse | null;
+      if (!payload?.ok) continue;
+
+      const status = String(payload.runtimeStatus ?? "").toLowerCase();
+      if (["success", "failed", "dead_letter", "cancelled", "waiting_approval"].includes(status)) {
+        return payload;
+      }
+    }
+
+    return null;
+  };
+
   const handleSend = async () => {
     const prompt = composerValue.trim();
     if (!prompt || thinking) return;
@@ -3110,9 +2909,14 @@ export default function Chat() {
     setVoiceInterimText("");
 
     let sessionId = activeSessionId;
+    let effectiveAgentId = resolvePinnedAgentId(sessionId);
     if (!sessionId) {
       sessionId = await createSession(resolvedTenantId);
       if (!sessionId) return;
+      if (draftAgentId !== "__auto__") {
+        setSessionAgentBindings((prev) => ({ ...prev, [sessionId]: draftAgentId }));
+      }
+      effectiveAgentId = resolvePinnedAgentId(sessionId) ?? (draftAgentId !== "__auto__" ? draftAgentId : null);
     }
 
     setComposerValue("");
@@ -3177,6 +2981,7 @@ export default function Chat() {
         const { data, error } = await invokeEdge("chat-execute", {
           body: {
             sessionId,
+            agentId: effectiveAgentId,
             prompt,
           },
         });
@@ -3193,7 +2998,55 @@ export default function Chat() {
           assistantContent =
             typeof payload.assistant === "string" && payload.assistant.trim()
               ? payload.assistant
-              : buildAssistantReply(prompt, agent, riskLevel, queryResult, knowledgeResult);
+              : [
+                  "Live response synthesis did not return content.",
+                  payload.assistantModelError ? `Reason: ${payload.assistantModelError}` : "Reason: Unknown runtime error",
+                  "Retry after validating backend model credentials/quota.",
+                ].join("\n");
+
+          const runtimeRunId = typeof payload.runtimeRunId === "string" ? payload.runtimeRunId.trim() : "";
+          const runtimeStatus = String(payload.runtimeStatus ?? "").toLowerCase();
+          if (runtimeRunId && (runtimeStatus === "queued" || runtimeStatus === "running")) {
+            const settled = await pollRuntimeRunUntilSettled({
+              sessionId,
+              runId: runtimeRunId,
+              timeoutMs: 60_000,
+            });
+            if (settled?.ok) {
+              agent = typeof settled.agent === "string" ? settled.agent : agent;
+              riskLevel = normalizeRisk(typeof settled.riskLevel === "string" ? settled.riskLevel : null) ?? riskLevel;
+              queryResult = normalizeSqlResultPayload(settled.sqlResult ?? null) ?? queryResult;
+              knowledgeResult = normalizeKnowledgeResultPayload(settled.knowledgeResult ?? null) ?? knowledgeResult;
+              actionProposal = normalizeActionProposalPayload(settled.actionProposal ?? null) ?? actionProposal;
+              if (typeof settled.assistant === "string" && settled.assistant.trim()) {
+                assistantContent = settled.assistant;
+              }
+
+              if (settled.approvalRequired) {
+                toast({
+                  title: "Approval required",
+                  description: settled.approvalRef
+                    ? `Request queued (${settled.approvalRef}). Open Approvals to continue.`
+                    : "Request queued. Open Approvals to continue.",
+                });
+              }
+            } else {
+              assistantContent = [
+                `Runtime run ${runtimeRunId} is still processing.`,
+                "I could not fetch a completed output within the wait window.",
+                "Please retry in a few moments; the run is still active in the worker queue.",
+              ].join("\n");
+            }
+          }
+
+          if (payload.assistantSource === "fallback") {
+            toast({
+              title: "Model response unavailable",
+              description: payload.assistantModelError
+                ? payload.assistantModelError
+                : "Backend returned fallback mode. Check model credentials/quota.",
+            });
+          }
 
           if (payload.approvalRequired) {
             toast({
@@ -3203,35 +3056,24 @@ export default function Chat() {
                 : "Request queued. Open Approvals to continue.",
             });
           }
+        } else {
+          assistantContent = [
+            "Live runtime response was not returned.",
+            "No fabricated fallback answer was returned.",
+            "Verify `chat-execute` runtime mode, worker health, and function logs.",
+          ].join("\n");
         }
       } catch (error) {
-        // Use transparent fallback when edge execution fails and clearly communicate degraded mode.
-        try {
-          knowledgeResult = await searchKnowledgeSources(prompt);
-        } catch (error) {
-          toast({
-            title: "Knowledge search failed",
-            description: error instanceof Error ? error.message : "Could not fetch knowledge sources.",
-            variant: "destructive",
-          });
-        }
         const backendReason =
           await formatEdgeFunctionError(error, { functionName: "chat-execute" });
-        assistantContent = knowledgeResult
-          ? [
-              "Live SQL/action execution is currently unavailable, but I searched indexed knowledge sources.",
-              "",
-              buildKnowledgeAnswer(knowledgeResult),
-              "",
-              `Backend error: ${backendReason}`,
-            ].join("\n")
-          : [
-              "I couldn't reach the live execution backend for this request.",
-              "No fallback query result was generated.",
-              "",
-              `Backend error: ${backendReason}`,
-              "Please verify `chat-execute` deployment/secrets and retry.",
-            ].join("\n");
+        knowledgeResult = null;
+        assistantContent = [
+          "Live SQL/action execution is currently unavailable.",
+          "No fabricated fallback answer was returned.",
+          "",
+          `Backend error: ${backendReason}`,
+          "Please verify `chat-execute` deployment/secrets and retry.",
+        ].join("\n");
       }
 
       await appendAssistantMessage({
@@ -3336,6 +3178,27 @@ export default function Chat() {
             <p className="text-xs text-slate-500">Shift+Enter for new line, Enter to send</p>
           </div>
           <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2">
+              <span className="hidden text-xs font-medium uppercase tracking-wide text-slate-500 xl:inline">Active agent</span>
+              <Select value={activeAgentSelection} onValueChange={handleAgentSelectionChange}>
+                <SelectTrigger className="h-8 w-[160px] text-xs sm:w-[190px] md:w-[220px]">
+                  <SelectValue placeholder="Auto-select agent" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__auto__">Auto-select (recommended)</SelectItem>
+                  {agentOptions.map((option) => (
+                    <SelectItem key={option.id} value={option.id}>
+                      {option.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {activeAgentOption && (
+              <Badge variant="secondary" className="hidden border-slate-200 bg-slate-100 text-slate-700 md:inline-flex">
+                Pinned: {activeAgentOption.name}
+              </Badge>
+            )}
             <Button type="button" variant="outline" size="sm" className="lg:hidden" onClick={() => setMobileSessionsOpen(true)}>
               Sessions
             </Button>

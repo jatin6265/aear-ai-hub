@@ -46,7 +46,8 @@ Claim coverage reference:
 4. Open chat and execute one SQL + one knowledge query.
 5. Trigger a Stripe webhook test event and verify `billing_events` row.
 6. Trigger a Razorpay webhook test event and verify `billing_events` row with `provider=razorpay`.
-7. Install an MCP-capable integration (e.g. Slack/HubSpot) and verify:
+7. Trigger Slack/WhatsApp/Telegram/Teams webhook test payloads and verify `ingestion_queue` + `context_events` rows.
+8. Install an MCP-capable integration (e.g. Slack/HubSpot) and verify:
    - `tenant_integration_installs` row is `installed`
    - `mcp_servers` row created for tenant when MCP URL exists
    - `tool_registry` receives auto-generated integration tools
@@ -56,7 +57,7 @@ Claim coverage reference:
 
 1. Deploy the exact same migration and function artifacts used in `dev`.
 2. Run `scripts/verify-runtime-wiring.sh --strict --project-ref <staging-project-ref>`.
-3. Run smoke checks for connection dispatch, chat execution, approvals, Stripe webhook, and Razorpay webhook.
+3. Run smoke checks for connection dispatch, chat execution, approvals, Stripe/Razorpay webhooks, and communication webhooks.
 4. Require manual sign-off before production promotion.
 
 ## Rollback strategy
@@ -76,6 +77,9 @@ Claim coverage reference:
    - `OPENAI_API_KEY`
    - `OPENAI_MODEL`
    - `OPENAI_EMBEDDING_MODEL=text-embedding-3-small`
+   - `AGENT_RUNTIME_ENGINE=openclaw` (or `openai`)
+   - `OPENCLAW_RPC_COMMAND="openclaw agent --mode rpc --json"` (if using OpenClaw engine)
+   - `OPENCLAW_STRICT=true` in staging/prod after OpenClaw connectivity is verified
    - `WORKER_RUNTIME_MODE=polling`
 4. Run readiness verification locally before deploy:
    - `scripts/verify-worker-deploy-readiness.sh`
@@ -83,6 +87,7 @@ Claim coverage reference:
    - Supabase connectivity probe success
    - poll loop processing `connector_jobs`
    - no auth/secret mismatch warnings
+   - selected agent engine (`openclaw-rpc` or `openai`) logged for runs
 
 Detailed checklist: [`docs/operations/worker-railway.md`](/Users/jatin/Desktop/aear-ai-hub/docs/operations/worker-railway.md)
 
@@ -94,3 +99,14 @@ Detailed checklist: [`docs/operations/worker-railway.md`](/Users/jatin/Desktop/a
    - `scripts/verify-worker-deploy-readiness.sh --strict`
    - `scripts/verify-runtime-wiring.sh --strict --project-ref <project-ref>`
 4. Scale worker replicas after queue-mode cutover.
+
+## OpenClaw cutover checklist
+
+1. Install OpenClaw CLI on worker host (`openclaw --version` must succeed).
+2. Set:
+   - `AGENT_RUNTIME_ENGINE=openclaw`
+   - `OPENCLAW_RPC_COMMAND` as needed for your host runtime
+3. Run smoke test in `dev` with approvals + governed tool execution.
+   - `npm run backend:smoke-openclaw-bridge`
+4. Promote to `staging` with `OPENCLAW_STRICT=false` first to observe bridge behavior.
+5. Set `OPENCLAW_STRICT=true` only after stable OpenClaw RPC health in staging.

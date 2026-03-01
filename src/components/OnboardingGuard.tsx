@@ -66,7 +66,11 @@ export default function OnboardingGuard() {
     return () => {
       active = false;
     };
-  }, [loading, session, user]);
+  // Re-run only when auth loading finishes or the actual user identity changes.
+  // session/user object references change on every TOKEN_REFRESHED — using their
+  // IDs prevents a redundant onboarding re-check and dashboard blink on token renewal.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, user?.id]);
 
   if (loading || checking) {
     return (
