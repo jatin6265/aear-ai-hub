@@ -259,7 +259,7 @@ export default function LandingPage() {
       </section>
 
       {/* ── Social Proof ────────────────────────────────────────────────────── */}
-      <section style={{ background: NAVY2, borderTop: '1px solid rgba(79,222,170,0.08)' }} className="py-12">
+      {/* <section style={{ background: NAVY2, borderTop: '1px solid rgba(79,222,170,0.08)' }} className="py-12">
         <div className="max-w-7xl mx-auto px-6">
           <p className="text-center text-sm mb-8" style={{ color: 'rgba(255,255,255,0.4)' }}>Trusted by teams at...</p>
           <div className="flex items-center justify-center gap-12 flex-wrap">
@@ -269,7 +269,7 @@ export default function LandingPage() {
             ))}
           </div>
         </div>
-      </section>
+      </section> */}
 
       {/* ── Features ────────────────────────────────────────────────────────── */}
       <section id="features" className="py-24" style={{ background: '#F0F9F5' }}>
