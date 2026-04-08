@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Zap, Shield, Brain, Eye, Lock, RefreshCw, ArrowRight, Check, Plug, Search, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-
+import { useState } from 'react';
 // ─── Brand palette (sourced from OpsAI_Logo_01.svg) ──────────────────────────
 const NAVY  = '#12294A';   // logo body colour
 const TEAL  = '#4FDEAA';   // logo "AI" colour / ring arcs
@@ -91,7 +91,32 @@ function OpsAILogo({
   );
 }
 
+function LogoIcon({ height = 30, opsColor = "#ffffff" }) {
+  return (
+    <svg
+      viewBox="90 95 220 160" // 
+      height={height}
+      style={{ display: "block", overflow:'visible' }}
+    >
+      <defs>
+        <clipPath id="logo-teal-clip">
+          <rect x="215" y="0" width="200" height="185" />
+        </clipPath>
+      </defs>
+
+      <path
+        d="M 200 100 A 100 100 0 1 0 300 200 L 260 200 A 60 60 0 1 1 200 140 Z"
+        fill={opsColor}
+      />
+
+      <circle cx="200" cy="200" r="67.5" fill="none" stroke="#4FDEAA" strokeWidth="15" clipPath="url(#logo-teal-clip)" />
+      <circle cx="200" cy="200" r="92.5" fill="none" stroke="#4FDEAA" strokeWidth="15" clipPath="url(#logo-teal-clip)" />
+    </svg>
+  );
+}
+
 export default function LandingPage() {
+  let [isMobile, setMobile] = useState(window.innerWidth < 450);
   return (
     <div className="overflow-hidden" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
 
@@ -115,7 +140,8 @@ export default function LandingPage() {
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           {/* Brand — real OpsAI_Logo_01.svg (white on dark nav) */}
           <div style={{ display: 'flex', alignItems: 'center', lineHeight: 0, marginBottom:'0.5rem' }}>
-            <OpsAILogo height={30} opsColor="#ffffff" />
+            {/* <OpsAILogo height={30} opsColor="#ffffff" /> */}
+            {window.innerWidth <500 ? <LogoIcon height={30} /> : <OpsAILogo height={30} opsColor="#ffffff" /> }
           </div>
 
           {/* Nav links */}

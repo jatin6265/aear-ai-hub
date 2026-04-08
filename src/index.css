@@ -191,3 +191,6 @@
     touch-action: pan-x pan-y pinch-zoom;
   }
 }
+.logo-svg {
+  width: auto;
+}
