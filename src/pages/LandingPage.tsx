@@ -8,6 +8,7 @@ const NAVY  = '#12294A';   // logo body colour
 const TEAL  = '#4FDEAA';   // logo "AI" colour / ring arcs
 const NAVY2 = '#0d1f38';   // slightly darker navy for footer
 const TEAL_DIM = '#0e9065'; // darker teal for use on light backgrounds
+const WHITISH = '#ffffff'; // white tone
 // ─────────────────────────────────────────────────────────────────────────────
 
 const features = [
@@ -98,7 +99,13 @@ export default function LandingPage() {
       <nav
         className="fixed top-0 left-0 right-0 z-50 border-b"
         style={{
-          background: 'rgba(18, 41, 74, 0.72)',
+          // marginLeft:'30px',
+          width: '70%',
+          marginLeft:'15%',
+          borderRadius:'60px',
+          marginTop:'1%',
+          padding:'0 2%',
+          background: 'rgba(13, 22, 37, 0.48)',
           backdropFilter: 'blur(20px) saturate(180%)',
           WebkitBackdropFilter: 'blur(20px) saturate(180%)',
           borderColor: 'rgba(79,222,170,0.2)',
@@ -107,8 +114,8 @@ export default function LandingPage() {
       >
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           {/* Brand — real OpsAI_Logo_01.svg (white on dark nav) */}
-          <div style={{ display: 'flex', alignItems: 'center', lineHeight: 0 }}>
-            <OpsAILogo height={34} opsColor="#ffffff" />
+          <div style={{ display: 'flex', alignItems: 'center', lineHeight: 0, marginBottom:'0.5rem' }}>
+            <OpsAILogo height={30} opsColor="#ffffff" />
           </div>
 
           {/* Nav links */}
@@ -140,6 +147,7 @@ export default function LandingPage() {
       {/* ── Hero ────────────────────────────────────────────────────────────── */}
       <section
         className="relative min-h-screen flex items-center pt-16 overflow-hidden"
+        // style={{ background: WHITISH }}
         style={{ background: NAVY }}
       >
         {/* Animated glow orbs */}
@@ -163,12 +171,14 @@ export default function LandingPage() {
             </div>
 
             <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold leading-[1.1] mb-6"
-              style={{ color: '#ffffff' }}>
+              style={{ color: WHITISH }}>
+              {/* style={{ color: NAVY }}> */}
               Your Enterprise AI<br />Operating Layer
             </h1>
 
             <p className="text-lg max-w-lg mb-10 leading-relaxed"
               style={{ color: 'rgba(255,255,255,0.65)' }}>
+              {/* style={{ color: NAVY }}> */}
               Connect any API or database. Auto-build RAG pipelines.<br />
               Enforce RACI governance. Execute safely.
             </p>
@@ -191,6 +201,7 @@ export default function LandingPage() {
                     background: 'transparent',
                     border: '1.5px solid rgba(255,255,255,0.35)',
                     color: '#ffffff',
+                    // color: NAVY,
                   }}
                 >
                   See Demo
