@@ -1,5 +1,4 @@
 # Worker on Railway (Phase 1 -> Phase 2 Path)
-
 ## Phase 1 target (MVP)
 
 - Runtime: `worker/connector-worker.mjs`
