@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Zap, Shield, Brain, Eye, Lock, RefreshCw, ArrowRight, Check, Plug, Search, ShieldCheck } from 'lucide-react';
+import { Zap, Shield, Brain, Eye, Lock, RefreshCw, ArrowRight, Check, Plug, Search, ShieldCheck, Instagram, Linkedin, MessageCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useState } from 'react';
 // ─── Brand palette (sourced from OpsAI_Logo_01.svg) ──────────────────────────
@@ -491,52 +491,82 @@ export default function LandingPage() {
       </section>
 
       {/* ── Footer ──────────────────────────────────────────────────────────── */}
-      <footer style={{ background: NAVY2, borderTop: '1px solid rgba(79,222,170,0.1)' }} className="py-12">
+      <footer style={{ background: NAVY2, borderTop: '1px solid rgba(79,222,170,0.1)' }} className="pt-14">
         <div className="max-w-7xl mx-auto px-6">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-12">
-            {/* Brand */}
-            <div>
-              <div className="mb-4">
-                <OpsAILogo height={28} opsColor="#ffffff" />
+          <div className="grid grid-cols-1 gap-x-10 gap-y-12 sm:grid-cols-2 lg:grid-cols-[1.55fr_1fr_1fr_0.9fr]">
+            {/* Company details */}
+            <div className="sm:col-span-2 lg:col-span-1">
+              <div className="mb-6">
+                <OpsAILogo height={34} opsColor="#ffffff" />
               </div>
-              <p className="text-xs leading-relaxed" style={{ color: 'rgba(255,255,255,0.4)' }}>
-                Autonomous Enterprise AI Runtime for modern teams.
-              </p>
+              <div className="max-w-xs space-y-5 text-sm leading-relaxed" style={{ color: 'rgba(255,255,255,0.55)' }}>
+                <div>
+                  <p className="font-bold text-base mb-1" style={{ color: '#ffffff' }}>Head Office:</p>
+                  <a
+                    href="https://www.google.com/maps/search/?api=1&query=OPSAI%20PRIVATE%20LIMITED%20A-52%2CSF%20Kh%20No%20402%2C%20Gali%20No.%203%2C%20Som%20Bazar%2C%20Garhi%20Mandu%2C%20East%20Delhi%20110053"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="transition-colors hover:opacity-70"
+                  >
+                    OPSAI PRIVATE LIMITED, A-52, SF Kh No 402, Gali No. 3, Som Bazar, Garhi Mandu, East Delhi, Delhi – 110053
+                  </a>
+                </div>
+                <div className="flex flex-wrap gap-x-5 gap-y-2 font-semibold" style={{ color: TEAL }}>
+                  <a href="mailto:info@opsai.co.in" className="transition-colors hover:opacity-70">info@opsai.co.in</a>
+                  <a href="tel:+918602237109" className="transition-colors hover:opacity-70">+91 8602237109</a>
+                </div>
+              </div>
+              <div className="mt-6 flex flex-wrap gap-3">
+                <a href="https://www.instagram.com/opsaihq/" target="_blank" rel="noreferrer" aria-label="Follow OpsAI on Instagram" className="flex h-9 w-9 items-center justify-center rounded-full transition-opacity hover:opacity-75" style={{ background: '#15355e', color: TEAL }}>
+                  <Instagram className="h-4 w-4" aria-hidden="true" />
+                </a>
+                <a href="https://www.linkedin.com/company/opsai-pvt-ltd" target="_blank" rel="noreferrer" aria-label="Follow OpsAI on LinkedIn" className="flex h-9 w-9 items-center justify-center rounded-full transition-opacity hover:opacity-75" style={{ background: '#15355e', color: TEAL }}>
+                  <Linkedin className="h-4 w-4" aria-hidden="true" />
+                </a>
+                <a href="https://x.com/opsaihq" target="_blank" rel="noreferrer" aria-label="Follow OpsAI on X" className="flex h-9 w-9 items-center justify-center rounded-full text-sm font-bold transition-opacity hover:opacity-75" style={{ background: '#15355e', color: TEAL }}>
+                  X
+                </a>
+                <a href="https://wa.me/918602237109?text=Hello%2C+I+would+like+to+connect+with+the+OpsAI+team+and+learn+more+about+your+company+and+offerings.+Please+get+in+touch+with+me.+Thank+you.&utm_source=chatgpt.com" target="_blank" rel="noreferrer" aria-label="Message OpsAI on WhatsApp" className="flex h-9 w-9 items-center justify-center rounded-full transition-opacity hover:opacity-75" style={{ background: '#15355e', color: TEAL }}>
+                  <MessageCircle className="h-4 w-4" aria-hidden="true" />
+                </a>
+              </div>
             </div>
 
             {/* Product */}
             <div>
-              <h4 className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'rgba(255,255,255,0.7)' }}>Product</h4>
-              <ul className="space-y-2 text-sm" style={{ color: 'rgba(255,255,255,0.45)' }}>
-                <li><a href="#features"               className="hover:text-white transition-colors">Features</a></li>
-                <li><Link to="/pricing"               className="hover:text-white transition-colors">Pricing</Link></li>
-                <li><Link to="/dashboard/audit"       className="hover:text-white transition-colors">Changelog</Link></li>
+              <h4 className="mb-5 text-sm font-bold" style={{ color: '#ffffff' }}>Product</h4>
+              <ul className="space-y-3 text-sm" style={{ color: 'rgba(255,255,255,0.55)' }}>
+                <li><a href="#features" className="transition-colors hover:opacity-70">Features</a></li>
+                <li><Link to="/pricing" className="transition-colors hover:opacity-70">Pricing</Link></li>
+                <li><Link to="/dashboard/audit" className="transition-colors hover:opacity-70">Changelog</Link></li>
               </ul>
             </div>
 
             {/* Company */}
             <div>
-              <h4 className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'rgba(255,255,255,0.7)' }}>Company</h4>
-              <ul className="space-y-2 text-sm" style={{ color: 'rgba(255,255,255,0.45)' }}>
-                <li><Link to="/pricing"              className="hover:text-white transition-colors">About</Link></li>
-                <li><Link to="/dashboard/insights"   className="hover:text-white transition-colors">Blog</Link></li>
-                <li><Link to="/auth/signup"          className="hover:text-white transition-colors">Careers</Link></li>
+              <h4 className="mb-5 text-sm font-bold" style={{ color: '#ffffff' }}>Company</h4>
+              <ul className="space-y-3 text-sm" style={{ color: 'rgba(255,255,255,0.55)' }}>
+                <li><Link to="/pricing" className="transition-colors hover:opacity-70">About us</Link></li>
+                <li><Link to="/dashboard/insights" className="transition-colors hover:opacity-70">Blog</Link></li>
+                <li><Link to="/auth/signup" className="transition-colors hover:opacity-70">Careers</Link></li>
               </ul>
             </div>
 
             {/* Legal */}
             <div>
-              <h4 className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'rgba(255,255,255,0.7)' }}>Legal</h4>
-              <ul className="space-y-2 text-sm" style={{ color: 'rgba(255,255,255,0.45)' }}>
-                <li><Link to="/legal/privacy"  className="hover:text-white transition-colors">Privacy</Link></li>
-                <li><Link to="/legal/terms"    className="hover:text-white transition-colors">Terms</Link></li>
-                <li><Link to="/legal/security" className="hover:text-white transition-colors">Security</Link></li>
+              <h4 className="mb-5 text-sm font-bold" style={{ color: '#ffffff' }}>Legal</h4>
+              <ul className="space-y-3 text-sm" style={{ color: 'rgba(255,255,255,0.55)' }}>
+                <li><Link to="/legal/privacy" className="transition-colors hover:opacity-70">Privacy policy</Link></li>
+                <li><Link to="/legal/terms" className="transition-colors hover:opacity-70">Terms of service</Link></li>
+                <li><Link to="/legal/security" className="transition-colors hover:opacity-70">Security</Link></li>
               </ul>
             </div>
           </div>
+        </div>
 
-          <div className="pt-8 text-center" style={{ borderTop: '1px solid rgba(79,222,170,0.1)' }}>
-            <p className="text-xs" style={{ color: 'rgba(255,255,255,0.3)' }}>© 2026 OpsAI. All rights reserved.</p>
+        <div className="mt-14 border-t" style={{ borderColor: 'rgba(79,222,170,0.12)' }}>
+          <div className="max-w-7xl mx-auto px-6 py-5">
+            <p className="text-xs font-medium" style={{ color: 'rgba(255,255,255,0.35)' }}>© 2026 OpsAI. All rights reserved.</p>
           </div>
         </div>
       </footer>
