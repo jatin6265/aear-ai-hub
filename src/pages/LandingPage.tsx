@@ -49,6 +49,7 @@ const logos = ['Acme Corp', 'Globex', 'Initech', 'Umbrella', 'Stark Ind.'];
 function OpsAILogo({
   height = 36,
   opsColor = '#ffffff',
+  // opsColor = NAVY,
 }: {
   height?: number;
   opsColor?: string;
@@ -141,7 +142,7 @@ export default function LandingPage() {
           {/* Brand — real OpsAI_Logo_01.svg (white on dark nav) */}
           <div style={{ display: 'flex', alignItems: 'center', lineHeight: 0, marginBottom:'0.5rem' }}>
             {/* <OpsAILogo height={30} opsColor="#ffffff" /> */}
-            {window.innerWidth <500 ? <LogoIcon height={30} /> : <OpsAILogo height={30} opsColor="#ffffff" /> }
+            {window.innerWidth <500 ? <LogoIcon height={30} /> : <OpsAILogo height={30} opsColor={WHITISH}/> }
           </div>
 
           {/* Nav links */}
@@ -198,13 +199,11 @@ export default function LandingPage() {
 
             <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold leading-[1.1] mb-6"
               style={{ color: WHITISH }}>
-              {/* style={{ color: NAVY }}> */}
               Your Enterprise AI<br />Operating Layer
             </h1>
 
             <p className="text-lg max-w-lg mb-10 leading-relaxed"
               style={{ color: 'rgba(255,255,255,0.65)' }}>
-              {/* style={{ color: NAVY }}> */}
               Connect any API or database. Auto-build RAG pipelines.<br />
               Enforce RACI governance. Execute safely.
             </p>
